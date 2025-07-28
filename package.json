@@ -1,0 +1,200 @@
+{
+  "name": "leepi-interview-recorder",
+  "version": "1.0.0",
+  "description": "ElectronJS app for recording and transcribing interviews with AI analysis",
+  "main": "src/main/main.js",
+  "homepage": ".",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npm run start-renderer\" \"npm run start-electron\"",
+    "start-renderer": "react-scripts start",
+    "start-electron": "wait-on http://localhost:3000 && electron .",
+    "build": "react-scripts build",
+    "build-electron": "electron-builder",
+    "dist": "npm run build && npm run build-electron",
+    "dist-mac": "npm run build && electron-builder --mac && npm run fix-macos-permissions",
+    "dist-win": "npm run build && electron-builder --win",
+    "dist-linux": "npm run build && electron-builder --linux",
+    "fix-macos-permissions": "scripts/fix-macos-permissions.sh",
+    "dist-all": "npm run build && electron-builder --mac --win --linux",
+    "pack": "npm run build && electron-builder --dir",
+    "verify": "node scripts/verify-setup.js",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "keywords": [
+    "electron",
+    "interview",
+    "transcription",
+    "ai",
+    "audio"
+  ],
+  "author": "LeepiAI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leepi-ai/interview-recorder.git"
+  },
+  "devDependencies": {
+    "@electron-forge/maker-squirrel": "^7.8.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.6.4",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.14.18",
+    "@mui/material": "^5.14.18",
+    "axios": "^1.6.2",
+    "electron-is-dev": "^2.0.0",
+    "electron-store": "^8.1.0",
+    "fs-extra": "^11.3.0",
+    "node-record-lpcm16": "^1.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "react-scripts": "5.0.1",
+    "remark-gfm": "^4.0.1",
+    "speaker": "^0.5.5",
+    "uuid": "^11.1.0"
+  },
+  "build": {
+    "appId": "com.leepi.interview-recorder",
+    "productName": "LeepiAI Interview Recorder",
+    "copyright": "Copyright © 2024 LeepiAI",
+    "cscLink": null,
+    "cscKeyPassword": null,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "build/**/*",
+      "src/main/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "*.md",
+      "scripts/**/*"
+    ],
+    "extraMetadata": {
+      "main": "src/main/main.js"
+    },
+    "extraResources": [
+      {
+        "from": "VIRTUAL_AUDIO_SETUP.md",
+        "to": "VIRTUAL_AUDIO_SETUP.md"
+      },
+      {
+        "from": "BLACKHOLE_SETUP.md",
+        "to": "BLACKHOLE_SETUP.md"
+      },
+      {
+        "from": "WINDOWS_SETUP.md",
+        "to": "WINDOWS_SETUP.md"
+      },
+      {
+        "from": "scripts/install-virtual-audio.sh",
+        "to": "scripts/install-virtual-audio.sh"
+      },
+      {
+        "from": "binaries/sox-macos",
+        "to": "sox-macos"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": "build-resources/entitlements.mac.plist",
+      "entitlementsInherit": "build-resources/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "LeepiAI Interview Recorder",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "sign": false,
+      "format": "ULFO"
+    },
+    "pkg": {
+      "license": "LICENSE"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "forceCodeSigning": false
+    },
+
+    "linux": {
+      "icon": "build-resources/icon.png",
+      "category": "AudioVideo",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "appImage": {
+      "license": "LICENSE"
+    },
+    "publish": null
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
