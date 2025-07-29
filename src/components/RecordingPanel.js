@@ -227,8 +227,8 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
 
         // Create segmented dual audio object for backend
         const dualAudioData = {
-          microphone: inputFiles,
-          system: outputFiles,
+          inputFiles: inputFiles,  // Array of File objects
+          outputFiles: outputFiles, // Array of File objects
           hasDualAudio: inputFiles.length > 0 && outputFiles.length > 0,
           isSegmented: true,
           totalSegments: result.dualAudioData?.totalSegments || inputFiles.length,

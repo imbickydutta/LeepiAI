@@ -57,7 +57,8 @@
     "react-scripts": "5.0.1",
     "remark-gfm": "^4.0.1",
     "speaker": "^0.5.5",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "webm-to-wav-converter": "^1.1.0"
   },
   "build": {
     "appId": "com.leepi.interview-recorder",
@@ -149,7 +150,6 @@
       ],
       "forceCodeSigning": false
     },
-
     "linux": {
       "icon": "build-resources/icon.png",
       "category": "AudioVideo",

@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
-const isDev = require('electron-is-dev');
+const fs = require('fs-extra');
 const Store = require('electron-store');
+const isDev = require('electron-is-dev');
 const AudioCaptureManager = require('./services/AudioCaptureManager');
 
 console.log('🚀 LeepiAI Interview Recorder starting...');
@@ -181,6 +182,17 @@ app.on('window-all-closed', () => {
   }
 });
 
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  console.error('❌ Stack trace:', error.stack);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // ===============================
 // IPC HANDLERS - Audio Recording
 // ===============================
@@ -192,75 +204,30 @@ ipcMain.handle('audio-start-dual-recording', async () => {
       console.error('❌ AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
+
+    console.log('🎙️ Starting dual recording...');
     const result = await audioCaptureManager.startDualRecording();
-    return { success: true, sessionId: result.sessionId };
+    console.log('✅ Dual recording started:', result);
+    return result;
   } catch (error) {
-    console.error('❌ Error starting dual recording:', error);
+    console.error('❌ Failed to start dual recording:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('audio-stop-dual-recording', async () => {
   try {
-    console.log('🛑 IPC: Stopping dual recording...');
     if (!audioCaptureManager) {
       console.error('❌ AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
-    
-    // Ensure recording is stopped even if error occurs
-    let dualAudioData;
-    try {
-      dualAudioData = await audioCaptureManager.stopDualRecording();
-    } catch (recordingError) {
-      console.error('❌ Error in stopDualRecording:', recordingError);
-      // Force cleanup
-      audioCaptureManager.isRecording = false;
-      if (audioCaptureManager.recordingTimer) {
-        clearTimeout(audioCaptureManager.recordingTimer);
-        audioCaptureManager.recordingTimer = null;
-      }
-      throw recordingError;
-    }
-    
-    console.log('📤 IPC: Received data from AudioCaptureManager:', {
-      success: dualAudioData.success,
-      sessionId: dualAudioData.sessionId,
-      totalSegments: dualAudioData.totalSegments,
-      totalInputSize: dualAudioData.totalInputSize,
-      totalOutputSize: dualAudioData.totalOutputSize,
-      segmentsLength: dualAudioData.segments?.length
-    });
-    
-    // Ensure we're returning a clean, serializable object
-    const result = {
-      success: true,
-      dualAudioData: {
-        success: dualAudioData.success,
-        sessionId: dualAudioData.sessionId,
-        totalSegments: dualAudioData.totalSegments || 0,
-        totalInputSize: dualAudioData.totalInputSize || 0,
-        totalOutputSize: dualAudioData.totalOutputSize || 0,
-        totalDuration: dualAudioData.totalDuration || 0,
-        segments: dualAudioData.segments || [],
-        inputFiles: dualAudioData.inputFiles || [],
-        outputFiles: dualAudioData.outputFiles || []
-      }
-    };
-    
-    console.log('📤 IPC: Returning result to renderer:', {
-      success: result.success,
-      dualAudioData: {
-        totalSegments: result.dualAudioData.totalSegments,
-        totalInputSize: result.dualAudioData.totalInputSize,
-        totalOutputSize: result.dualAudioData.totalOutputSize,
-        segmentsLength: result.dualAudioData.segments.length
-      }
-    });
-    
+
+    console.log('🛑 Stopping dual recording...');
+    const result = await audioCaptureManager.stopDualRecording();
+    console.log('✅ Dual recording stopped:', result);
     return result;
   } catch (error) {
-    console.error('❌ IPC: Error stopping dual recording:', error);
+    console.error('❌ Failed to stop dual recording:', error);
     return { success: false, error: error.message };
   }
 });
@@ -302,10 +269,13 @@ ipcMain.handle('audio-get-devices', async () => {
       console.error('❌ AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
-    const devices = await audioCaptureManager.getAudioDevices();
-    return { success: true, devices: [...devices.input, ...devices.output] };
+
+    console.log('🎤 Getting audio devices...');
+    const result = await audioCaptureManager.getAudioDevices();
+    console.log('✅ Audio devices retrieved:', result);
+    return result;
   } catch (error) {
-    console.error('Get audio devices error:', error);
+    console.error('❌ Failed to get audio devices:', error);
     return { success: false, error: error.message };
   }
 });
@@ -313,14 +283,14 @@ ipcMain.handle('audio-get-devices', async () => {
 // Windows WebRTC audio data saving
 ipcMain.handle('save-audio-data', async (event, { segmentId, type, audioData }) => {
   try {
+    console.log(`🔧 Saving ${type} WAV audio data for segment ${segmentId}...`);
+    
     if (!audioCaptureManager || !audioCaptureManager.windowsAudioCapture) {
+      console.error('❌ Windows audio capture not available');
       return { success: false, error: 'Windows audio capture not available' };
     }
 
-    const { app } = require('electron');
     const tempDir = path.join(app.getPath('temp'), 'leepi-recorder');
-    const fs = require('fs-extra');
-    const path = require('path');
 
     // Ensure temp directory exists
     fs.ensureDirSync(tempDir);
@@ -329,18 +299,17 @@ ipcMain.handle('save-audio-data', async (event, { segmentId, type, audioData }) 
     const fileName = `${type}_${segmentId}.wav`;
     const filePath = path.join(tempDir, fileName);
 
-    // Convert audio data to buffer and create WAV file
-    const audioBuffer = Buffer.from(audioData);
-    const wavHeader = audioCaptureManager.windowsAudioCapture._createMinimalWavHeader();
-    const wavFile = Buffer.concat([wavHeader, audioBuffer]);
-
-    // Write the file
-    await fs.writeFile(filePath, wavFile);
-
-    console.log(`✅ Saved ${type} audio data for segment ${segmentId}: ${filePath}`);
+    // Convert audio data to buffer (this is now WAV data)
+    const wavBuffer = Buffer.from(audioData);
+    
+    // Write the WAV file directly
+    await fs.writeFile(filePath, wavBuffer);
+    
+    console.log(`✅ Saved ${type} WAV audio data for segment ${segmentId}: ${filePath} (${wavBuffer.length} bytes)`);
     return { success: true, filePath };
+    
   } catch (error) {
-    console.error('❌ Error saving audio data:', error);
+    console.error('❌ Error saving WAV audio data:', error);
     return { success: false, error: error.message };
   }
 });
