@@ -14,6 +14,14 @@ app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoCapture');
 app.commandLine.appendSwitch('enable-usermedia-screen-capturing');
 app.commandLine.appendSwitch('auto-select-desktop-capture-source', 'LeepiAI');
 
+// Windows-specific switches for system audio capture
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('enable-features', 'WebCodecs,WebRtcUseMinMaxVEADimensions');
+  app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+  app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-Audio-MinimizeResamplingOnMobile/Enabled/');
+  app.commandLine.appendSwitch('use-fake-ui-for-media-stream'); // Skip permission dialogs in testing
+}
+
 // Initialize persistent storage
 const store = new Store();
 
@@ -61,10 +69,10 @@ function createWindow() {
   });
 
   // Load the app
-  const startUrl = isDev 
-    ? 'http://localhost:3000' 
+  const startUrl = isDev
+    ? 'http://localhost:3000'
     : `file://${path.join(__dirname, '../../build/index.html')}`;
-  
+
   mainWindow.loadURL(startUrl);
 
   // Show window when ready
@@ -87,7 +95,7 @@ function createWindow() {
 
   // Add keyboard shortcut for DevTools (F12)
   const { globalShortcut } = require('electron');
-  
+
   // Register F12 shortcut for DevTools
   globalShortcut.register('F12', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -99,58 +107,94 @@ function createWindow() {
 // App event handlers
 app.whenReady().then(async () => {
   createWindow();
-  
+
   // Initialize services
   try {
     audioCaptureManager = new AudioCaptureManager();
-    
+
     // Set main window reference for Windows WebRTC audio capture
     if (process.platform === 'win32' && audioCaptureManager.windowsAudioCapture) {
       audioCaptureManager.windowsAudioCapture.setMainWindow(mainWindow);
     }
-    
+
   } catch (error) {
     console.error('❌ Failed to initialize AudioCaptureManager:', error);
     audioCaptureManager = null;
   }
-  
-  // Handle permissions for media access
+
+  // Enhanced permission handling for system audio capture
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    
-    // Allow media permissions (microphone, camera, screen capture)
-    const allowedPermissions = ['media', 'microphone', 'camera', 'display-capture'];
-    if (allowedPermissions.includes(permission)) {
+    console.log('🔐 Permission request:', permission);
+
+    // Allow all media-related permissions
+    if (permission.includes('media') || permission.includes('display') || permission.includes('capture')) {
+      console.log('✅ Media permission granted:', permission);
       return callback(true);
     }
+
+    // Allow microphone and camera
+    if (permission.includes('microphone') || permission.includes('camera')) {
+      console.log('✅ Device permission granted:', permission);
+      return callback(true);
+    }
+
+    console.log('❌ Permission denied:', permission);
+    callback(false);
+  });
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    console.log('🔐 Permission request:', permission);
+
+    // Allow all media-related permissions
+    if (permission.includes('media') || permission.includes('display') || permission.includes('capture')) {
+      console.log('✅ Media permission granted:', permission);
+      return callback(true);
+    }
+
+    // Allow microphone and camera
+    if (permission.includes('microphone') || permission.includes('camera')) {
+      console.log('✅ Device permission granted:', permission);
+      return callback(true);
+    }
+
+    console.log('❌ Permission denied:', permission);
     callback(false);
   });
 
-  // Handle screen capture requests - this is critical for system audio
-  mainWindow.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
-    
-    // Get available desktop capture sources
-    const { desktopCapturer } = require('electron');
-    desktopCapturer.getSources({ 
-      types: ['screen', 'window'],
-      fetchWindowIcons: false
-    }).then((sources) => {
-      
-      if (sources.length > 0) {
-        // Use the first screen source (primary display)
-        const primaryScreen = sources.find(source => source.name.includes('Entire Screen')) || sources[0];        
-        callback({
-          video: primaryScreen,
-          audio: 'loopback' // This enables system audio capture
+  // Request system audio permissions on startup
+  if (process.platform === 'win32') {
+    console.log('🔐 Requesting Windows system audio permissions...');
+
+    // Show a dialog requesting system audio permissions
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        const { dialog } = require('electron');
+        const result = await dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'System Audio Permission Required',
+          message: 'LeepiAI needs permission to capture system audio for recording.',
+          detail: 'Please click OK and then allow screen capture when prompted. This will enable system audio recording.',
+          buttons: ['OK', 'Cancel'],
+          defaultId: 0
         });
-      } else {
-        callback({});
+
+        if (result.response === 0) {
+          console.log('✅ User agreed to system audio permissions');
+          // Note: System audio permissions are now handled by WindowsAudioCapture.js
+          // using getUserMedia instead of getDisplayMedia
+          console.log('ℹ️ System audio will be captured using getUserMedia when recording starts');
+        } else {
+          console.log('❌ User declined system audio permissions');
+        }
+      } catch (error) {
+        console.error('❌ Failed to request system audio permissions:', error);
       }
-    }).catch((error) => {
-      console.error('❌ Error getting capture sources:', error);
-      callback({});
     });
-  });
-  
+  }
+
+  // Note: System audio capture is now handled by WindowsAudioCapture.js
+  // using getUserMedia instead of getDisplayMedia, so we don't need this handler
+  console.log('ℹ️ System audio capture handled by WindowsAudioCapture.js service');
+
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -169,11 +213,39 @@ app.on('window-all-closed', () => {
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
   console.error('❌ Stack trace:', error.stack);
+
+  // Safety: Stop any active recording if AudioCaptureManager is available
+  if (audioCaptureManager) {
+    console.log('🛡️ Safety: Stopping recording due to uncaught exception...');
+    try {
+      if (audioCaptureManager.isRecording) {
+        audioCaptureManager.stopDualRecording().catch(stopError => {
+          console.warn('⚠️ Could not stop recording during exception recovery:', stopError.message);
+        });
+      }
+    } catch (stopError) {
+      console.warn('⚠️ Could not stop recording during exception recovery:', stopError.message);
+    }
+  }
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+
+  // Safety: Stop any active recording if AudioCaptureManager is available
+  if (audioCaptureManager) {
+    console.log('🛡️ Safety: Stopping recording due to unhandled rejection...');
+    try {
+      if (audioCaptureManager.isRecording) {
+        audioCaptureManager.stopDualRecording().catch(stopError => {
+          console.warn('⚠️ Could not stop recording during rejection recovery:', stopError.message);
+        });
+      }
+    } catch (stopError) {
+      console.warn('⚠️ Could not stop recording during rejection recovery:', stopError.message);
+    }
+  }
 });
 
 // ===============================
@@ -185,7 +257,7 @@ ipcMain.handle('audio-start-dual-recording', async () => {
   try {
     // TEMP_DEBUG_IPC_001: Log IPC call
     console.log('📞 TEMP_DEBUG_IPC_001 - IPC: audio-start-dual-recording called');
-    
+
     if (!audioCaptureManager) {
       console.error('❌ TEMP_DEBUG_IPC_001 - AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
@@ -193,11 +265,41 @@ ipcMain.handle('audio-start-dual-recording', async () => {
 
     console.log('🔧 TEMP_DEBUG_IPC_001 - Calling audioCaptureManager.startDualRecording()');
     const result = await audioCaptureManager.startDualRecording();
+
+    // DEBUG: Log the result structure to identify non-serializable objects
+    console.log('🔍 TEMP_DEBUG_IPC_001 - Result type:', typeof result);
+    console.log('🔍 TEMP_DEBUG_IPC_001 - Result keys:', Object.keys(result || {}));
+    console.log('🔍 TEMP_DEBUG_IPC_001 - Result success:', result?.success);
+    console.log('🔍 TEMP_DEBUG_IPC_001 - Result sessionId:', result?.sessionId);
+    console.log('🔍 TEMP_DEBUG_IPC_001 - Result segments type:', typeof result?.segments);
+    console.log('🔍 TEMP_DEBUG_IPC_001 - Result segments length:', result?.segments?.length);
+
+    // Test serialization before returning
+    try {
+      const testSerialization = JSON.stringify(result);
+      console.log('✅ TEMP_DEBUG_IPC_001 - Result serialization test passed, length:', testSerialization.length);
+    } catch (serializeError) {
+      console.error('❌ TEMP_DEBUG_IPC_001 - Result serialization failed:', serializeError);
+      console.error('❌ TEMP_DEBUG_IPC_001 - Problem object:', result);
+      // Return a safe fallback
+      return {
+        success: false,
+        error: `Serialization failed: ${serializeError.message}`,
+        originalSuccess: result?.success,
+        originalSessionId: result?.sessionId
+      };
+    }
+
     console.log('✅ TEMP_DEBUG_IPC_001 - startDualRecording result:', result);
     return result;
   } catch (error) {
     console.error('❌ TEMP_DEBUG_IPC_001 - Failed to start dual recording:', error);
-    return { success: false, error: error.message };
+    console.error('❌ TEMP_DEBUG_IPC_001 - Error type:', typeof error);
+    console.error('❌ TEMP_DEBUG_IPC_001 - Error message:', error.message);
+    console.error('❌ TEMP_DEBUG_IPC_001 - Error stack:', error.stack);
+
+    // Ensure error is serializable
+    return { success: false, error: error.message || 'Unknown error occurred' };
   }
 });
 
@@ -205,7 +307,7 @@ ipcMain.handle('audio-stop-dual-recording', async () => {
   try {
     // TEMP_DEBUG_IPC_002: Log IPC call
     console.log('📞 TEMP_DEBUG_IPC_002 - IPC: audio-stop-dual-recording called');
-    
+
     if (!audioCaptureManager) {
       console.error('❌ TEMP_DEBUG_IPC_002 - AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
@@ -248,7 +350,7 @@ ipcMain.handle('audio-stop-recording', async () => {
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
     const result = await audioCaptureManager.stopDualRecording();
-    
+
     // Handle the new structure with dualAudioData
     if (result.dualAudioData) {
       // Return input audio data for backward compatibility
@@ -280,35 +382,75 @@ ipcMain.handle('audio-get-devices', async () => {
 });
 
 // Windows WebRTC audio data saving
-ipcMain.handle('save-audio-data', async (event, { segmentId, type, audioData }) => {
+ipcMain.handle('save-audio-data', async (event, { filePath, type, audioData }) => {
   try {
-    console.log(`🔧 Saving ${type} WAV audio data for segment ${segmentId}...`);
-    
+    console.log(`🔧 DEBUG: save-audio-data called with:`, { filePath, type, audioDataLength: audioData?.length });
+    console.log(`🔧 Saving ${type} audio data to: ${filePath}...`);
+
     if (!audioCaptureManager || !audioCaptureManager.windowsAudioCapture) {
       console.error('❌ Windows audio capture not available');
       return { success: false, error: 'Windows audio capture not available' };
     }
 
-    const tempDir = path.join(app.getPath('temp'), 'leepi-recorder');
+    // Ensure the directory exists
+    const dir = path.dirname(filePath);
+    fs.ensureDirSync(dir);
 
-    // Ensure temp directory exists
-    fs.ensureDirSync(tempDir);
+    // Convert audio data to buffer
+    const audioBuffer = Buffer.from(audioData);
 
-    // Create file path
-    const fileName = `${type}_${segmentId}.wav`;
-    const filePath = path.join(tempDir, fileName);
+    // Write the audio file to the exact path specified
+    await fs.writeFile(filePath, audioBuffer);
 
-    // Convert audio data to buffer (this is now WAV data)
-    const wavBuffer = Buffer.from(audioData);
-    
-    // Write the WAV file directly
-    await fs.writeFile(filePath, wavBuffer);
-    
-    console.log(`✅ Saved ${type} WAV audio data for segment ${segmentId}: ${filePath} (${wavBuffer.length} bytes)`);
-    return { success: true, filePath };
-    
+    // Update the segment object with the correct file path and size
+    if (audioCaptureManager && audioCaptureManager.windowsAudioCapture) {
+      // Find the current segment by matching the file path
+      const segment = audioCaptureManager.windowsAudioCapture.segments.find(s =>
+        s.inputFile === filePath || s.outputFile === filePath
+      );
+
+      if (segment) {
+        if (type === 'input') {
+          segment.inputFile = filePath;
+          segment.inputSize = audioBuffer.length;
+          segment.inputFormat = path.extname(filePath).substring(1);
+        } else if (type === 'output') {
+          segment.outputFile = filePath;
+          segment.outputSize = audioBuffer.length;
+          segment.outputFormat = path.extname(filePath).substring(1);
+        }
+        console.log(`🔧 Updated segment ${segment.segmentId} ${type} file: ${filePath} (${audioBuffer.length} bytes)`);
+      } else {
+        console.warn(`⚠️ Could not find segment for file: ${filePath}`);
+      }
+    }
+
+    console.log(`✅ Saved ${type} audio data to: ${filePath} (${audioBuffer.length} bytes)`);
+    return { success: true, filePath, size: audioBuffer.length };
+
   } catch (error) {
-    console.error('❌ Error saving WAV audio data:', error);
+    console.error('❌ Error saving audio data:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Reset recording state (for recovery from failed states)
+ipcMain.handle('audio-reset-recording-state', async () => {
+  try {
+    console.log('🔄 IPC: audio-reset-recording-state called');
+
+    if (!audioCaptureManager) {
+      console.error('❌ AudioCaptureManager not initialized');
+      return { success: false, error: 'Audio service not ready. Please restart the application.' };
+    }
+
+    // Use the AudioCaptureManager's reset method (handles all platforms)
+    await audioCaptureManager.resetRecordingState();
+    console.log('✅ Recording state reset successfully');
+
+    return { success: true, message: 'Recording state reset successfully' };
+  } catch (error) {
+    console.error('❌ Failed to reset recording state:', error);
     return { success: false, error: error.message };
   }
 });
@@ -377,7 +519,7 @@ ipcMain.handle('file-download-blob', async (event, { blob, filename }) => {
       await fs.writeFile(result.filePath, buffer);
       return { success: true, filePath: result.filePath };
     }
-    
+
     return { success: false, error: 'Save cancelled' };
   } catch (error) {
     return { success: false, error: error.message };

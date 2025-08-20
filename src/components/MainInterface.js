@@ -49,7 +49,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
   const minChatHeight = 100;
   const maxChatHeight = window.innerHeight * 0.8; // 80% of window height
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  
+
   // New state for better error handling and recordings management
   const [activeTab, setActiveTab] = useState(0); // 0: Transcripts, 1: Recordings, 2: Offline Storage
   const [uploadHistory, setUploadHistory] = useState([]);
@@ -64,7 +64,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
     try {
       setLoading(true);
       const result = await apiService.getTranscripts();
-      
+
       if (result.success) {
         setTranscripts(result.transcripts);
       } else {
@@ -88,10 +88,10 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
         outputFiles: dualAudioData.outputFiles,
         hasOutputAudio: dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0
       });
-      
+
       // Generate session ID if not provided
       const sessionId = dualAudioData.sessionId || `session_${Date.now()}_${user.id}`;
-      
+
       // Add to upload history
       const uploadId = Date.now().toString();
       const uploadRecord = {
@@ -101,39 +101,44 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
         dualAudioData: { ...dualAudioData, sessionId },
         progress: 0
       };
-      
+
       setUploadHistory(prev => [...prev, uploadRecord]);
       onSuccess('Uploading and processing recording...');
-      
+
       // Check if we have dual audio or single audio
-      if (dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0 && 
-          dualAudioData.inputFiles && dualAudioData.inputFiles.length > 0) {
+      if (dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0 &&
+        dualAudioData.inputFiles && dualAudioData.inputFiles.length > 0) {
         onSuccess('Processing dual audio: Microphone + System Audio...');
-        
+
         // Upload audio files directly without conversion
         onSuccess('Uploading audio files...');
-        
+
         // Upload dual audio files directly
         let result;
         try {
-          result = await apiService.uploadSegmentedDualAudio(
-            dualAudioData.inputFiles, 
+          result = await apiService.uploadRawAudioArrays(
+            dualAudioData.inputFiles,
             dualAudioData.outputFiles,
             (progress) => {
               // Update progress
-              setUploadHistory(prev => 
-                prev.map(upload => 
-                  upload.id === uploadId 
+              setUploadHistory(prev =>
+                prev.map(upload =>
+                  upload.id === uploadId
                     ? { ...upload, progress }
                     : upload
                 )
               );
               onSuccess(`Uploading... ${progress}%`);
+            },
+            {
+              segments: dualAudioData.segments || [],
+              totalDuration: dualAudioData.totalDuration || 0,
+              totalSegments: dualAudioData.totalSegments || 0
             }
           );
         } catch (uploadError) {
           console.error('❌ Network error during upload:', uploadError);
-          
+
           // Store recording offline for later retry
           try {
             const offlineId = await OfflineStorageService.storeRecording({
@@ -142,67 +147,67 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               uploadId,
               error: uploadError.message
             });
-            
+
             onError(`Network error: Recording saved offline (ID: ${offlineId}). You can retry upload later.`);
           } catch (offlineError) {
             console.error('❌ Failed to store recording offline:', offlineError);
             onError(`Network error and offline storage failed: ${uploadError.message}`);
           }
-          
+
           // Update upload record as failed
-          setUploadHistory(prev => 
-            prev.map(upload => 
-              upload.id === uploadId 
-                ? { 
-                    ...upload, 
-                    status: 'failed', 
-                    endTime: new Date(), 
-                    error: `Network error: ${uploadError.message}`
-                  }
+          setUploadHistory(prev =>
+            prev.map(upload =>
+              upload.id === uploadId
+                ? {
+                  ...upload,
+                  status: 'failed',
+                  endTime: new Date(),
+                  error: `Network error: ${uploadError.message}`
+                }
                 : upload
             )
           );
-          
+
           return;
         }
-        
+
         console.log('🔍 Dual audio upload result:', result);
-        
+
         if (result.success) {
           // Update upload record as successful
-          setUploadHistory(prev => 
-            prev.map(upload => 
-              upload.id === uploadId 
+          setUploadHistory(prev =>
+            prev.map(upload =>
+              upload.id === uploadId
                 ? { ...upload, status: 'completed', endTime: new Date(), result }
                 : upload
             )
           );
-          
+
           onSuccess('Dual audio transcript generated successfully!');
-          
+
           // Refresh transcript list
           await loadTranscripts();
-          
+
           // Auto-select the new transcript
           if (result.transcript) {
             setSelectedTranscript(result.transcript);
           }
         } else {
           // Update upload record as failed
-          setUploadHistory(prev => 
-            prev.map(upload => 
-              upload.id === uploadId 
-                ? { 
-                    ...upload, 
-                    status: 'failed', 
-                    endTime: new Date(), 
-                    error: result.error,
-                    result 
-                  }
+          setUploadHistory(prev =>
+            prev.map(upload =>
+              upload.id === uploadId
+                ? {
+                  ...upload,
+                  status: 'failed',
+                  endTime: new Date(),
+                  error: result.error,
+                  result
+                }
                 : upload
             )
           );
-          
+
           // Store recording offline for later retry
           try {
             const offlineId = await OfflineStorageService.storeRecording({
@@ -211,13 +216,13 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               uploadId,
               error: result.error
             });
-            
+
             onError(`Upload failed: Recording saved offline (ID: ${offlineId}). You can retry upload later.`);
           } catch (offlineError) {
             console.error('❌ Failed to store recording offline:', offlineError);
             onError(`Upload failed and offline storage failed: ${result.error}`);
           }
-          
+
           // Add to failed uploads for retry
           setFailedUploads(prev => [...prev, {
             id: uploadId,
@@ -228,21 +233,21 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
         }
       } else {
         onSuccess('Processing microphone audio only...');
-        
+
         // Upload microphone audio files directly without conversion
         onSuccess('Uploading microphone audio files...');
-        
+
         // Check if this is segmented recording
         if (dualAudioData.totalSegments > 1 && Array.isArray(dualAudioData.inputFiles) && dualAudioData.inputFiles.length > 0) {
           // Handle segmented microphone-only recording
           const result = await apiService.uploadSegmentedDualAudio(
-            dualAudioData.inputFiles, 
+            dualAudioData.inputFiles,
             [], // Empty array for system files
             (progress) => {
               // Update progress
-              setUploadHistory(prev => 
-                prev.map(upload => 
-                  upload.id === uploadId 
+              setUploadHistory(prev =>
+                prev.map(upload =>
+                  upload.id === uploadId
                     ? { ...upload, progress }
                     : upload
                 )
@@ -250,44 +255,44 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               onSuccess(`Uploading... ${progress}%`);
             }
           );
-          
+
           console.log('🔍 Segmented microphone upload result:', result);
-          
+
           if (result.success) {
             // Update upload record as successful
-            setUploadHistory(prev => 
-              prev.map(upload => 
-                upload.id === uploadId 
+            setUploadHistory(prev =>
+              prev.map(upload =>
+                upload.id === uploadId
                   ? { ...upload, status: 'completed', endTime: new Date(), result }
                   : upload
-                )
+              )
             );
-            
+
             onSuccess('Transcript generated successfully!');
-            
+
             // Refresh transcript list
             await loadTranscripts();
-            
+
             // Auto-select the new transcript
             if (result.transcript) {
               setSelectedTranscript(result.transcript);
             }
           } else {
             // Update upload record as failed
-            setUploadHistory(prev => 
-              prev.map(upload => 
-                upload.id === uploadId 
-                  ? { 
-                      ...upload, 
-                      status: 'failed', 
-                      endTime: new Date(), 
-                      error: result.error,
-                      result 
-                    }
+            setUploadHistory(prev =>
+              prev.map(upload =>
+                upload.id === uploadId
+                  ? {
+                    ...upload,
+                    status: 'failed',
+                    endTime: new Date(),
+                    error: result.error,
+                    result
+                  }
                   : upload
-                )
+              )
             );
-            
+
             // Add to failed uploads for retry
             setFailedUploads(prev => [...prev, {
               id: uploadId,
@@ -295,7 +300,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               error: result.error,
               timestamp: new Date()
             }]);
-            
+
             const errorMessage = result.error || 'Failed to process recording';
             console.error('❌ Audio processing failed:', result.error);
             onError(`Transcription failed: ${errorMessage}`);
@@ -311,53 +316,53 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
           // Upload single audio file (microphone only)
           const result = await apiService.uploadAudio(dualAudioData.inputFiles[0], (progress) => {
             // Update progress
-            setUploadHistory(prev => 
-              prev.map(upload => 
-                upload.id === uploadId 
+            setUploadHistory(prev =>
+              prev.map(upload =>
+                upload.id === uploadId
                   ? { ...upload, progress }
                   : upload
               )
             );
             onSuccess(`Uploading... ${progress}%`);
           });
-          
+
           console.log('🔍 Audio upload result:', result);
-          
+
           if (result.success) {
             // Update upload record as successful
-            setUploadHistory(prev => 
-              prev.map(upload => 
-                upload.id === uploadId 
+            setUploadHistory(prev =>
+              prev.map(upload =>
+                upload.id === uploadId
                   ? { ...upload, status: 'completed', endTime: new Date(), result }
                   : upload
-                )
+              )
             );
-            
+
             onSuccess('Transcript generated successfully!');
-            
+
             // Refresh transcript list
             await loadTranscripts();
-            
+
             // Auto-select the new transcript
             if (result.transcript) {
               setSelectedTranscript(result.transcript);
             }
           } else {
             // Update upload record as failed
-            setUploadHistory(prev => 
-              prev.map(upload => 
-                upload.id === uploadId 
-                  ? { 
-                      ...upload, 
-                      status: 'failed', 
-                      endTime: new Date(), 
-                      error: result.error,
-                      result 
-                    }
+            setUploadHistory(prev =>
+              prev.map(upload =>
+                upload.id === uploadId
+                  ? {
+                    ...upload,
+                    status: 'failed',
+                    endTime: new Date(),
+                    error: result.error,
+                    result
+                  }
                   : upload
-                )
+              )
             );
-            
+
             // Add to failed uploads for retry
             setFailedUploads(prev => [...prev, {
               id: uploadId,
@@ -365,7 +370,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               error: result.error,
               timestamp: new Date()
             }]);
-            
+
             const errorMessage = result.error || 'Failed to process recording';
             console.error('❌ Audio processing failed:', result.error);
             onError(`Transcription failed: ${errorMessage}`);
@@ -374,21 +379,21 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
       }
     } catch (error) {
       console.error('❌ Unexpected error in handleRecordingComplete:', error);
-      
+
       // Update upload record as failed
-      setUploadHistory(prev => 
-        prev.map(upload => 
-          upload.id === uploadId 
-            ? { 
-                ...upload, 
-                status: 'failed', 
-                endTime: new Date(), 
-                error: error.message
-              }
+      setUploadHistory(prev =>
+        prev.map(upload =>
+          upload.id === uploadId
+            ? {
+              ...upload,
+              status: 'failed',
+              endTime: new Date(),
+              error: error.message
+            }
             : upload
-          )
-        );
-      
+        )
+      );
+
       // Add to failed uploads for retry
       setFailedUploads(prev => [...prev, {
         id: uploadId,
@@ -396,7 +401,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
         error: error.message,
         timestamp: new Date()
       }]);
-      
+
       onError(`Processing failed: ${error.message}`);
     }
   };
@@ -406,7 +411,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
     try {
       // Remove from failed uploads
       setFailedUploads(prev => prev.filter(upload => upload.id !== failedUpload.id));
-      
+
       // Retry the upload
       await handleRecordingComplete(failedUpload.dualAudioData);
     } catch (error) {
@@ -421,13 +426,13 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
   const handleTranscriptDelete = async (transcriptId) => {
     try {
       const result = await apiService.deleteTranscript(transcriptId);
-      
+
       if (result.success) {
         onSuccess('Transcript deleted');
-        
+
         // Refresh list
         await loadTranscripts();
-        
+
         // Clear selection if deleted transcript was selected
         if (selectedTranscript && selectedTranscript.id === transcriptId) {
           setSelectedTranscript(null);
@@ -457,10 +462,10 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
     try {
       // Update the selected transcript in state
       setSelectedTranscript(updatedTranscript);
-      
+
       // Update the transcript in the list
-      setTranscripts(prevTranscripts => 
-        prevTranscripts.map(t => 
+      setTranscripts(prevTranscripts =>
+        prevTranscripts.map(t =>
           t.id === updatedTranscript.id ? updatedTranscript : t
         )
       );
@@ -484,14 +489,14 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
 
   const handleMouseMove = (e) => {
     if (!isResizing) return;
-    
+
     // Get the container's bottom position
     const container = document.querySelector('.right-panel-container');
     if (!container) return;
-    
+
     const containerRect = container.getBoundingClientRect();
     const newHeight = containerRect.bottom - e.clientY;
-    
+
     // Constrain height between min and max values
     const constrainedHeight = Math.max(minChatHeight, Math.min(newHeight, maxChatHeight));
     setAiChatHeight(constrainedHeight);
@@ -522,28 +527,28 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
   };
 
   return (
-    <Box sx={{ 
-      display: 'flex', 
-      flexDirection: 'column', 
+    <Box sx={{
+      display: 'flex',
+      flexDirection: 'column',
       height: '100vh',
       minHeight: '100vh',
       maxHeight: '100vh',
       overflow: 'hidden',
     }}>
       {/* Header */}
-      <AppBar 
-        position="static" 
-        sx={{ 
+      <AppBar
+        position="static"
+        sx={{
           background: 'linear-gradient(45deg, #1e1e1e 30%, #2d2d2d 90%)',
           borderBottom: '1px solid #333',
           boxShadow: 'none',
         }}
       >
         <Toolbar>
-          <Typography 
-            variant="h6" 
-            sx={{ 
-              flexGrow: 1, 
+          <Typography
+            variant="h6"
+            sx={{
+              flexGrow: 1,
               fontWeight: 600,
               background: 'linear-gradient(45deg, #00bcd4, #4dd0e1)',
               backgroundClip: 'text',
@@ -553,12 +558,12 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
           >
             LeepiAI Interview Recorder
           </Typography>
-          
+
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="body2" color="text.secondary">
               Welcome, {user.firstName}
             </Typography>
-            
+
             <Tooltip title="Account settings">
               <IconButton
                 size="large"
@@ -569,10 +574,10 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                 onClick={handleProfileMenuOpen}
                 color="inherit"
               >
-                <Avatar 
-                  sx={{ 
-                    width: 32, 
-                    height: 32, 
+                <Avatar
+                  sx={{
+                    width: 32,
+                    height: 32,
                     bgcolor: 'primary.main',
                     fontSize: '0.875rem',
                   }}
@@ -638,19 +643,19 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
       )}
 
       {/* Main Content */}
-      <Box sx={{ 
-        flex: 1, 
+      <Box sx={{
+        flex: 1,
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0, // Critical for flexbox scrolling
       }}>
-        <Grid container sx={{ 
+        <Grid container sx={{
           height: '100%',
           minHeight: 0, // Critical for flexbox scrolling
         }}>
           {/* Left Panel - Recording and Content Management */}
-          <Grid item xs={12} md={4} sx={{ 
+          <Grid item xs={12} md={4} sx={{
             borderRight: '1px solid #333',
             display: 'flex',
             flexDirection: 'column',
@@ -658,33 +663,33 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
             minHeight: 0, // Critical for flexbox scrolling
           }}>
             {/* Recording Panel */}
-            <Box sx={{ 
-              p: 2, 
+            <Box sx={{
+              p: 2,
               borderBottom: '1px solid #333',
               backgroundColor: '#1a1a1a',
             }}>
-              <RecordingPanel 
+              <RecordingPanel
                 onRecordingComplete={handleRecordingComplete}
                 onError={onError}
                 onSuccess={onSuccess}
               />
             </Box>
-            
+
             {/* Content Management Tabs */}
-            <Box sx={{ 
-              flex: 1, 
+            <Box sx={{
+              flex: 1,
               overflow: 'hidden',
               minHeight: 0, // Critical for flexbox scrolling
               display: 'flex',
               flexDirection: 'column',
             }}>
-              <Box sx={{ 
-                borderBottom: 1, 
+              <Box sx={{
+                borderBottom: 1,
                 borderColor: '#333',
                 flexShrink: 0, // Prevent tabs from shrinking
               }}>
-                <Tabs 
-                  value={activeTab} 
+                <Tabs
+                  value={activeTab}
                   onChange={handleTabChange}
                   sx={{
                     '& .MuiTab-root': {
@@ -698,27 +703,27 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                     },
                   }}
                 >
-                  <Tab 
-                    icon={<Description />} 
-                    label="Transcripts" 
+                  <Tab
+                    icon={<Description />}
+                    label="Transcripts"
                     iconPosition="start"
                   />
-                  <Tab 
-                    icon={<AudioFile />} 
-                    label="Recordings" 
+                  <Tab
+                    icon={<AudioFile />}
+                    label="Recordings"
                     iconPosition="start"
                   />
-                  <Tab 
-                    icon={<Storage />} 
-                    label="Offline Storage" 
+                  <Tab
+                    icon={<Storage />}
+                    label="Offline Storage"
                     iconPosition="start"
                   />
                 </Tabs>
               </Box>
-              
+
               {/* Tab Content */}
-              <Box sx={{ 
-                flex: 1, 
+              <Box sx={{
+                flex: 1,
                 overflow: 'hidden',
                 minHeight: 0, // Important: allows flex child to shrink below content size
                 display: 'flex',
@@ -734,11 +739,16 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                     onRefresh={loadTranscripts}
                   />
                 ) : activeTab === 1 ? (
-                  <RecordingsManager
-                    onError={onError}
-                    onSuccess={onSuccess}
-                    onRefresh={loadTranscripts}
-                  />
+                  // RecordingsManager temporarily hidden
+                  // <RecordingsManager
+                  //   onError={onError}
+                  //   onSuccess={onSuccess}
+                  //   onRefresh={loadTranscripts}
+                  // />
+                  <Box sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>
+                    <Typography variant="h6">Recordings Panel Hidden</Typography>
+                    <Typography variant="body2">This panel has been temporarily disabled.</Typography>
+                  </Box>
                 ) : (
                   <OfflineRecordingsManager
                     onError={onError}
@@ -751,12 +761,12 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
           </Grid>
 
           {/* Right Panel - Transcript Viewer and AI Chat */}
-          <Grid 
-            item 
-            xs={12} 
-            md={8} 
+          <Grid
+            item
+            xs={12}
+            md={8}
             className="right-panel-container"
-            sx={{ 
+            sx={{
               display: 'flex',
               flexDirection: 'column',
               height: '100%',
@@ -765,8 +775,8 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
             {selectedTranscript ? (
               <>
                 {/* Transcript Viewer */}
-                <Box sx={{ 
-                  flex: 1, 
+                <Box sx={{
+                  flex: 1,
                   overflow: 'hidden',
                   borderBottom: '1px solid #333',
                 }}>
@@ -777,10 +787,10 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                     onTranscriptUpdate={handleTranscriptUpdate}
                   />
                 </Box>
-                
+
                 {/* Resizable AI Chat Panel */}
-                <Box 
-                  sx={{ 
+                <Box
+                  sx={{
                     position: 'relative',
                     backgroundColor: '#1a1a1a',
                     transition: isResizing ? 'none' : 'height 0.3s ease',
@@ -812,7 +822,7 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                       }
                     }}
                   >
-                    <Box 
+                    <Box
                       className="dragHandle"
                       sx={{
                         width: '50px',
@@ -848,8 +858,8 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                   </Button>
 
                   {/* AI Chat Content */}
-                  <Box 
-                    sx={{ 
+                  <Box
+                    sx={{
                       height: '100%',
                       opacity: isAIChatExpanded ? 1 : 0,
                       visibility: isAIChatExpanded ? 'visible' : 'hidden',

@@ -26,22 +26,24 @@ import {
   Badge,
 } from '@mui/material';
 import {
-  Refresh,
   PlayArrow,
   Stop,
   Delete,
-  Warning,
+  Download,
+  CloudUpload,
   CheckCircle,
   Error,
+  Warning,
+  Info,
+  Description,
+  CloudOff,
+  Folder,
+  Refresh,
   Schedule,
-  Storage,
   ExpandMore,
   ExpandLess,
   AudioFile,
-  Description,
-  CloudUpload,
-  CloudOff,
-  Folder,
+  Storage,
 } from '@mui/icons-material';
 import apiService from '../services/ApiService';
 
@@ -62,7 +64,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
     try {
       setLoading(true);
       const result = await apiService.getRecordings();
-      
+
       if (result.success) {
         setRecordings(result.recordings);
       } else {
@@ -78,9 +80,9 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
   const handleRetry = async (recordingId) => {
     try {
       setRetrying(prev => ({ ...prev, [recordingId]: true }));
-      
+
       const result = await apiService.retryRecording(recordingId);
-      
+
       if (result.success) {
         onSuccess('Recording retry initiated successfully');
         await loadRecordings(); // Refresh the list
@@ -98,20 +100,20 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
   const handleRetryRecording = async (recordingId) => {
     try {
       setRetrying(prev => ({ ...prev, [recordingId]: true }));
-      
+
       // For pending recordings without audio files, we need to trigger a new recording
       // This will be handled by the parent component (MainInterface)
       onSuccess('Starting new recording session...');
-      
+
       // Notify parent to start a new recording
       if (onRefresh) onRefresh(); // This will trigger the parent to refresh and potentially start recording
-      
+
       // Remove the pending recording since we're starting fresh
       await apiService.deleteRecording(recordingId);
-      
+
       // Refresh the recordings list
       await loadRecordings();
-      
+
     } catch (error) {
       onError('Failed to retry recording');
     } finally {
@@ -122,9 +124,9 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
   const handleDeleteAudio = async (recordingId) => {
     try {
       setDeleting(prev => ({ ...prev, [recordingId]: true }));
-      
+
       const result = await apiService.deleteRecordingAudio(recordingId);
-      
+
       if (result.success) {
         onSuccess('Audio files deleted successfully');
         await loadRecordings(); // Refresh the list
@@ -140,17 +142,16 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
 
   const handleDeleteConfirm = async () => {
     if (!recordingToDelete) return;
-    
+
     try {
       setDeleting(prev => ({ ...prev, [recordingToDelete.id]: true }));
-      
+
       const result = await apiService.deleteRecording(recordingToDelete.id);
-      
+
       if (result.success) {
         onSuccess('Recording deleted successfully');
-        setShowDeleteDialog(false);
-        setRecordingToDelete(null);
         await loadRecordings(); // Refresh the list
+        if (onRefresh) onRefresh(); // Notify parent to refresh transcripts
       } else {
         onError(result.error || 'Failed to delete recording');
       }
@@ -158,6 +159,58 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
       onError('Failed to delete recording');
     } finally {
       setDeleting(prev => ({ ...prev, [recordingToDelete.id]: false }));
+      setShowDeleteDialog(false);
+      setRecordingToDelete(null);
+    }
+  };
+
+  const handleRefreshRecording = async (recordingId) => {
+    try {
+      // First, try to find if there's a transcript for this recording
+      const transcriptResult = await apiService.findTranscriptByRecordingId(recordingId);
+
+      if (transcriptResult.success && transcriptResult.transcript) {
+        // Found a transcript! Update the recording with transcript info
+        const updatedRecording = {
+          ...recordings.find(r => r.id === recordingId),
+          transcriptId: transcriptResult.transcript.id,
+          transcriptStatus: 'available'
+        };
+
+        // Update the recording in the list
+        setRecordings(prev => prev.map(rec =>
+          rec.id === recordingId ? updatedRecording : rec
+        ));
+
+        // Notify parent to refresh transcripts
+        if (onRefresh) {
+          onRefresh();
+        }
+
+        onSuccess('Transcript found and status updated!');
+        return;
+      }
+
+      // If no transcript found, fetch the latest recording data
+      const result = await apiService.getRecording(recordingId);
+
+      if (result.success) {
+        // Update the specific recording in the list
+        setRecordings(prev => prev.map(rec =>
+          rec.id === recordingId ? result.recording : rec
+        ));
+
+        // If transcript is now available, notify parent to refresh
+        if (result.recording.transcriptId && onRefresh) {
+          onRefresh();
+        }
+
+        onSuccess('Recording status refreshed');
+      } else {
+        onError('Failed to refresh recording status');
+      }
+    } catch (error) {
+      onError('Failed to refresh recording status');
     }
   };
 
@@ -219,9 +272,9 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit' 
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -240,10 +293,10 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
 
   if (loading) {
     return (
-      <Box sx={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
+      <Box sx={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
         height: 200,
         flexDirection: 'column',
         gap: 2,
@@ -261,17 +314,17 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
   const pendingRecordings = recordings.filter(r => r.status === 'pending' || r.status === 'processing');
 
   return (
-    <Box 
+    <Box
       className="recordings-manager-container"
-      sx={{ 
-        height: '100%', 
-        display: 'flex', 
+      sx={{
+        height: '100%',
+        display: 'flex',
         flexDirection: 'column',
         minHeight: 0, // Important: allows flex child to shrink below content size
       }}>
       {/* Header */}
-      <Box sx={{ 
-        p: 2, 
+      <Box sx={{
+        p: 2,
         borderBottom: '1px solid #333',
         display: 'flex',
         justifyContent: 'space-between',
@@ -283,21 +336,21 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
             Recordings Manager
           </Typography>
-          
+
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <Chip 
+            <Chip
               label={`${completedRecordings.length} Completed`}
               color="success"
               size="small"
               icon={<CheckCircle />}
             />
-            <Chip 
+            <Chip
               label={`${failedRecordings.length} Failed`}
               color="error"
               size="small"
               icon={<Error />}
             />
-            <Chip 
+            <Chip
               label={`${pendingRecordings.length} Pending`}
               color="warning"
               size="small"
@@ -305,7 +358,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
             />
           </Box>
         </Box>
-        
+
         <Tooltip title="Refresh recordings">
           <IconButton onClick={loadRecordings} size="small">
             <Refresh />
@@ -314,11 +367,11 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
       </Box>
 
       {/* Recordings List */}
-      <Box 
+      <Box
         className="recordings-list-container"
-        sx={{ 
-          flex: 1, 
-          overflow: 'auto', 
+        sx={{
+          flex: 1,
+          overflow: 'auto',
           p: 2,
           minHeight: 0, // Important: allows flex child to shrink below content size
           '&::-webkit-scrollbar': {
@@ -337,10 +390,10 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
         }}
       >
         {recordings.length === 0 ? (
-          <Box sx={{ 
-            display: 'flex', 
+          <Box sx={{
+            display: 'flex',
             flexDirection: 'column',
-            alignItems: 'center', 
+            alignItems: 'center',
             justifyContent: 'center',
             height: '100%',
             textAlign: 'center',
@@ -355,15 +408,15 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
             </Typography>
           </Box>
         ) : (
-          <List sx={{ 
+          <List sx={{
             p: 0,
             height: '100%',
             overflow: 'auto',
           }}>
             {recordings.map((recording) => (
-              <Card 
+              <Card
                 key={recording.id}
-                sx={{ 
+                sx={{
                   mb: 2,
                   border: '1px solid #333',
                   backgroundColor: '#1e1e1e',
@@ -386,16 +439,16 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                     >
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
                         {getStatusIcon(recording)}
-                        
+
                         <Box sx={{ flex: 1, minWidth: 0 }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                            <Typography 
-                              variant="subtitle1" 
+                            <Typography
+                              variant="subtitle1"
                               sx={{ fontWeight: 600 }}
                             >
                               {recording.title || 'Untitled Recording'}
                             </Typography>
-                            
+
                             {recording.isParentSession && (
                               <Chip
                                 icon={<Folder />}
@@ -403,14 +456,14 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                                 size="small"
                                 color="info"
                                 variant="outlined"
-                                sx={{ 
+                                sx={{
                                   fontSize: '0.6rem',
                                   height: 20,
                                 }}
                               />
                             )}
                           </Box>
-                          
+
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                             <Chip
                               label={getStatusText(recording)}
@@ -418,7 +471,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                               size="small"
                               variant="outlined"
                             />
-                            
+
                             {recording.metadata?.totalDuration && (
                               <Chip
                                 icon={<Schedule />}
@@ -427,7 +480,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                                 variant="outlined"
                               />
                             )}
-                            
+
                             {recording.metadata?.totalFileSize && (
                               <Chip
                                 icon={<Storage />}
@@ -436,7 +489,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                                 variant="outlined"
                               />
                             )}
-                            
+
                             {recording.metadata?.totalSegments && recording.metadata.totalSegments > 1 && (
                               <Chip
                                 icon={<AudioFile />}
@@ -446,13 +499,13 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                               />
                             )}
                           </Box>
-                          
+
                           <Typography variant="caption" color="text.secondary">
                             {formatDate(recording.createdAt)}
                           </Typography>
                         </Box>
                       </Box>
-                      
+
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {expandedItems.has(recording.id) ? <ExpandLess /> : <ExpandMore />}
                       </Box>
@@ -462,7 +515,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                   {/* Expanded Details */}
                   <Collapse in={expandedItems.has(recording.id)}>
                     <Divider sx={{ borderColor: '#333' }} />
-                    
+
                     <Box sx={{ p: 2, backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
                       <Grid container spacing={2}>
                         {/* Session Information */}
@@ -471,35 +524,35 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                             <Typography variant="subtitle2" sx={{ mb: 1, color: 'primary.main' }}>
                               Session Information
                             </Typography>
-                            
-                            <Box sx={{ 
-                              p: 1.5, 
-                              backgroundColor: 'rgba(0, 188, 212, 0.1)', 
+
+                            <Box sx={{
+                              p: 1.5,
+                              backgroundColor: 'rgba(0, 188, 212, 0.1)',
                               borderRadius: 1,
                               border: '1px solid rgba(0, 188, 212, 0.3)',
                             }}>
                               <Typography variant="body2" sx={{ mb: 1 }}>
                                 <strong>Session ID:</strong> {recording.sessionId}
                               </Typography>
-                              
+
                               {recording.metadata?.totalSegments && (
                                 <Typography variant="body2" sx={{ mb: 1 }}>
                                   <strong>Total Segments:</strong> {recording.metadata.totalSegments}
                                 </Typography>
                               )}
-                              
+
                               {recording.metadata?.successfulChunks !== undefined && (
                                 <Typography variant="body2" sx={{ mb: 1 }}>
                                   <strong>Successful Chunks:</strong> {recording.metadata.successfulChunks}
                                 </Typography>
                               )}
-                              
+
                               {recording.metadata?.failedChunks !== undefined && recording.metadata.failedChunks > 0 && (
                                 <Typography variant="body2" sx={{ mb: 1, color: 'warning.main' }}>
                                   <strong>Failed Chunks:</strong> {recording.metadata.failedChunks}
                                 </Typography>
                               )}
-                              
+
                               {recording.metadata?.totalDuration && (
                                 <Typography variant="body2">
                                   <strong>Total Duration:</strong> {formatDuration(recording.metadata.totalDuration)}
@@ -514,21 +567,21 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                           <Typography variant="subtitle2" sx={{ mb: 1, color: 'primary.main' }}>
                             Audio Files
                           </Typography>
-                          
+
                           {recording.audioFiles?.length > 0 ? (
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                               {recording.audioFiles
                                 .filter((file, index, self) => {
                                   // Remove duplicates based on filename and path
-                                  const firstIndex = self.findIndex(f => 
+                                  const firstIndex = self.findIndex(f =>
                                     f.filename === file.filename && f.path === file.path
                                   );
                                   return firstIndex === index;
                                 })
                                 .map((file, index) => (
-                                  <Box key={`${file.filename}-${index}`} sx={{ 
-                                    display: 'flex', 
-                                    alignItems: 'center', 
+                                  <Box key={`${file.filename}-${index}`} sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
                                     gap: 1,
                                     p: 1,
                                     backgroundColor: 'rgba(255, 255, 255, 0.05)',
@@ -536,7 +589,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                                   }}>
                                     <AudioFile fontSize="small" color="primary" />
                                     <Box sx={{ flex: 1, minWidth: 0 }}>
-                                      <Typography variant="body2" sx={{ 
+                                      <Typography variant="body2" sx={{
                                         overflow: 'hidden',
                                         textOverflow: 'ellipsis',
                                         whiteSpace: 'nowrap'
@@ -569,14 +622,23 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
 
                         {/* Transcript Info */}
                         <Grid item xs={12} md={6}>
-                          <Typography variant="subtitle2" sx={{ mb: 1, color: 'secondary.main' }}>
-                            Transcript Status
-                          </Typography>
-                          
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                            <Typography variant="subtitle2" sx={{ color: 'secondary.main' }}>
+                              Transcript Status
+                            </Typography>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleRefreshRecording(recording.id)}
+                              sx={{ color: 'text.secondary' }}
+                            >
+                              <Refresh fontSize="small" />
+                            </IconButton>
+                          </Box>
+
                           {recording.transcriptId ? (
-                            <Box sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
+                            <Box sx={{
+                              display: 'flex',
+                              alignItems: 'center',
                               gap: 1,
                               p: 1,
                               backgroundColor: 'rgba(76, 175, 80, 0.1)',
@@ -588,28 +650,49 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                                 Transcript available
                               </Typography>
                             </Box>
-                          ) : (
-                            <Box sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
+                          ) : recording.status === 'completed' && recording.audioFiles?.length > 0 ? (
+                            <Box sx={{
+                              display: 'flex',
+                              flexDirection: 'column',
                               gap: 1,
                               p: 1,
                               backgroundColor: 'rgba(255, 152, 0, 0.1)',
                               borderRadius: 1,
                               border: '1px solid rgba(255, 152, 0, 0.3)',
                             }}>
-                              <CloudOff color="warning" />
-                              <Typography variant="body2">
-                                {recording.status === 'completed' && recording.audioFiles?.length > 0 
-                                  ? 'Audio recorded but transcript processing failed'
-                                  : 'No transcript generated'
-                                }
-                              </Typography>
-                              {recording.status === 'completed' && !recording.transcriptId && (
-                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                                  Try retrying the upload to generate transcript
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <CloudOff color="warning" />
+                                <Typography variant="body2">
+                                  Transcript processing in progress...
                                 </Typography>
-                              )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                Check back later or refresh to see updated status
+                              </Typography>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="primary"
+                                onClick={() => handleRefreshRecording(recording.id)}
+                                sx={{ alignSelf: 'flex-start', mt: 0.5 }}
+                              >
+                                Check for Transcript
+                              </Button>
+                            </Box>
+                          ) : (
+                            <Box sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1,
+                              p: 1,
+                              backgroundColor: 'rgba(158, 158, 158, 0.1)',
+                              borderRadius: 1,
+                              border: '1px solid rgba(158, 158, 158, 0.3)',
+                            }}>
+                              <Info color="info" />
+                              <Typography variant="body2">
+                                No transcript generated
+                              </Typography>
                             </Box>
                           )}
                         </Grid>
@@ -620,14 +703,14 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                             <Typography variant="subtitle2" sx={{ mb: 1, color: 'info.main' }}>
                               Segment Statuses
                             </Typography>
-                            
+
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                               {recording.metadata.chunkStatuses.map((chunk, index) => {
                                 // Safely handle segment index to prevent NaN
-                                const segmentNumber = (chunk.segmentIndex !== undefined && !isNaN(chunk.segmentIndex)) 
-                                  ? chunk.segmentIndex + 1 
+                                const segmentNumber = (chunk.segmentIndex !== undefined && !isNaN(chunk.segmentIndex))
+                                  ? chunk.segmentIndex + 1
                                   : index + 1;
-                                
+
                                 return (
                                   <Chip
                                     key={chunk.id || index}
@@ -636,7 +719,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                                     variant="outlined"
                                     size="small"
                                     icon={chunk.status === 'completed' ? <CheckCircle /> : <Error />}
-                                    sx={{ 
+                                    sx={{
                                       fontSize: '0.7rem',
                                       height: 24,
                                       '& .MuiChip-icon': { fontSize: 14 },
@@ -675,7 +758,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                             {retrying[recording.id] ? 'Retrying...' : 'Retry Recording'}
                           </Button>
                         )}
-                        
+
                         {/* Retry Upload for failed recordings */}
                         {recording.status === 'failed' && (
                           <Button
@@ -689,7 +772,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                             {retrying[recording.id] ? 'Retrying...' : 'Retry Upload'}
                           </Button>
                         )}
-                        
+
                         {/* Delete Audio Files for recordings with audio */}
                         {recording.audioFiles?.length > 0 && (
                           <Button
@@ -703,7 +786,7 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
                             {deleting[recording.id] ? 'Deleting...' : 'Delete Audio Files'}
                           </Button>
                         )}
-                        
+
                         {/* Delete Recording */}
                         <Button
                           variant="outlined"
@@ -729,8 +812,8 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
       </Box>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog 
-        open={showDeleteDialog} 
+      <Dialog
+        open={showDeleteDialog}
         onClose={() => setShowDeleteDialog(false)}
         PaperProps={{
           sx: {
@@ -739,8 +822,8 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
           },
         }}
       >
-        <DialogTitle sx={{ 
-          backgroundColor: '#1a1a1a', 
+        <DialogTitle sx={{
+          backgroundColor: '#1a1a1a',
           borderBottom: '1px solid #333',
           display: 'flex',
           alignItems: 'center',
@@ -749,12 +832,12 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
           <Delete color="error" />
           Delete Recording
         </DialogTitle>
-        
+
         <DialogContent sx={{ pt: 3 }}>
           <Alert severity="warning" sx={{ mb: 2 }}>
             This action cannot be undone. This will permanently delete:
           </Alert>
-          
+
           <Box component="ul" sx={{ pl: 2, color: 'text.secondary' }}>
             <li>The recording entry</li>
             <li>All associated audio files</li>
@@ -765,29 +848,29 @@ function RecordingsManager({ onError, onSuccess, onRefresh }) {
               <li>All {recordingToDelete.metadata.totalSegments} recording segments</li>
             )}
           </Box>
-          
+
           <Typography variant="body2" sx={{ mt: 2, color: 'text.secondary' }}>
             <strong>Recording:</strong> {recordingToDelete?.title || 'Untitled'}
           </Typography>
-          
+
           {recordingToDelete?.isParentSession && (
             <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
               <strong>Session ID:</strong> {recordingToDelete?.sessionId}
             </Typography>
           )}
         </DialogContent>
-        
-        <DialogActions sx={{ 
-          backgroundColor: '#1a1a1a', 
+
+        <DialogActions sx={{
+          backgroundColor: '#1a1a1a',
           borderTop: '1px solid #333',
-          gap: 1, 
-          p: 2 
+          gap: 1,
+          p: 2
         }}>
           <Button onClick={() => setShowDeleteDialog(false)}>
             Cancel
           </Button>
-          
-          <Button 
+
+          <Button
             onClick={handleDeleteConfirm}
             variant="contained"
             color="error"

@@ -6,11 +6,23 @@ import axios from 'axios';
  */
 class ApiService {
   constructor() {
-    // For development, always use localhost
-    this.baseURL = 'http://localhost:3001';
+    // Use production backend for built app, localhost for development
+    // In the renderer process, we can't use electron-is-dev, so we'll use NODE_ENV
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    this.baseURL = isProduction
+      ? 'https://leepiaibackend-production.up.railway.app'
+      : 'http://localhost:3001';
+
     this.token = null;
     this.refreshToken = null;
-    
+
+    console.log('🔗 ApiService initialized:', {
+      environment: process.env.NODE_ENV || 'development',
+      isProduction: isProduction,
+      backendURL: this.baseURL
+    });
+
     // Create axios instance
     this.api = axios.create({
       baseURL: this.baseURL,
@@ -60,13 +72,32 @@ class ApiService {
         return Promise.reject(error);
       }
     );
-
-    console.log('🔗 ApiService initialized with backend URL:', this.baseURL);
   }
 
   // =====================================================
   // HELPER METHODS
   // =====================================================
+
+  /**
+   * Set a custom backend URL (for user configuration)
+   * @param {string} url - Custom backend URL
+   */
+  setCustomBackendURL(url) {
+    if (url && url.trim()) {
+      this.baseURL = url.trim();
+      // Update axios instance
+      this.api.defaults.baseURL = this.baseURL;
+      console.log('🔗 Custom backend URL set:', this.baseURL);
+    }
+  }
+
+  /**
+   * Get current backend URL
+   * @returns {string} Current backend URL
+   */
+  getBackendURL() {
+    return this.baseURL;
+  }
 
   /**
    * Calculate dynamic timeout based on file size
@@ -76,29 +107,29 @@ class ApiService {
   calculateUploadTimeout(files) {
     const fileArray = Array.isArray(files) ? files : [files];
     const totalSize = fileArray.reduce((sum, file) => sum + file.size, 0);
-    
+
     // Base timeout: 30 seconds
     let timeout = 30000;
-    
+
     // Add time based on file size
     // For every 10MB, add 30 seconds
     const sizeInMB = totalSize / (1024 * 1024);
     const additionalTime = Math.ceil(sizeInMB / 10) * 30000;
-    
+
     // Add transcription time estimate
     // Assume 1 minute of audio takes ~30 seconds to transcribe
     // For every 10 minutes of audio, add 5 minutes
     const estimatedDurationInMinutes = sizeInMB * 2; // Rough estimate: 1MB ≈ 2 minutes of audio
     const transcriptionTime = Math.ceil(estimatedDurationInMinutes / 10) * 300000; // 5 minutes per 10 minutes of audio
-    
+
     timeout += additionalTime + transcriptionTime;
-    
+
     // Cap at 30 minutes maximum for large files
     const maxTimeout = 30 * 60 * 1000; // 30 minutes
     timeout = Math.min(timeout, maxTimeout);
-    
-    console.log(`📊 Upload timeout calculated: ${timeout/1000}s for ${(totalSize/(1024*1024)).toFixed(1)}MB file(s)`);
-    
+
+    console.log(`📊 Upload timeout calculated: ${timeout / 1000}s for ${(totalSize / (1024 * 1024)).toFixed(1)}MB file(s)`);
+
     return timeout;
   }
 
@@ -115,7 +146,7 @@ class ApiService {
   setTokens(token, refreshToken) {
     this.token = token;
     this.refreshToken = refreshToken;
-    
+
     // Store in localStorage for persistence
     if (token) {
       localStorage.setItem('leepi_token', token);
@@ -162,7 +193,7 @@ class ApiService {
   async login(credentials) {
     try {
       const response = await this.api.post('/api/auth/login', credentials);
-      
+
       if (response.data.success) {
         this.setTokens(response.data.token, response.data.refreshToken);
         return {
@@ -185,7 +216,7 @@ class ApiService {
   async register(userData) {
     try {
       const response = await this.api.post('/api/auth/register', userData);
-      
+
       if (response.data.success) {
         this.setTokens(response.data.token, response.data.refreshToken);
         return {
@@ -221,13 +252,13 @@ class ApiService {
   async getCurrentUser() {
     try {
       this.loadTokensFromStorage();
-      
+
       if (!this.token) {
         return null;
       }
 
       const response = await this.api.get('/api/auth/me');
-      
+
       if (response.data.success) {
         return response.data.user;
       }
@@ -246,7 +277,7 @@ class ApiService {
 
   handleError(error) {
     console.error('API Error:', error);
-    
+
     if (error.response) {
       // Server responded with error status
       return {
@@ -276,7 +307,7 @@ class ApiService {
   // Upload audio file for transcription
   async uploadAudio(audioFile, onProgress = null) {
     try {
-              // Use original file - no compression needed since we record at optimal 6kHz
+      // Use original file - no compression needed since we record at optimal 6kHz
       const fileToUpload = audioFile;
 
       const formData = new FormData();
@@ -316,21 +347,21 @@ class ApiService {
 
       // Create form data with all files
       const formData = new FormData();
-      
+
       // Add all microphone files
       if (microphoneFiles && microphoneFiles.length > 0) {
         microphoneFiles.forEach((file, index) => {
           formData.append('microphone', file, `mic_${index}.wav`);
         });
       }
-      
+
       // Add all system files
       if (systemFiles && systemFiles.length > 0) {
         systemFiles.forEach((file, index) => {
           formData.append('system', file, `sys_${index}.wav`);
         });
       }
-      
+
       formData.append('isSegmented', 'true');
       formData.append('totalSegments', String(microphoneFiles?.length || 0));
 
@@ -369,13 +400,13 @@ class ApiService {
     try {
       // Check if this is a segmented recording
       const isSegmented = Array.isArray(microphoneFile);
-      
+
       if (isSegmented) {
         // Handle segmented upload
         return await this.uploadSegmentedDualAudio(microphoneFile, systemFile, onProgress);
       }
 
-              // Use original files - no compression needed since we record at optimal 6kHz
+      // Use original files - no compression needed since we record at optimal 6kHz
       const micFileToUpload = microphoneFile;
       const sysFileToUpload = systemFile;
 
@@ -408,16 +439,78 @@ class ApiService {
     }
   }
 
+  // Upload raw audio file arrays (no transcription required)
+  async uploadRawAudioArrays(microphoneFiles, systemFiles, onProgress = null, recordingMetadata = {}) {
+    try {
+      console.log('🎵 Starting raw audio arrays upload:', {
+        microphoneFiles: microphoneFiles?.length || 0,
+        systemFiles: systemFiles?.length || 0
+      });
+
+      // Create form data with all files
+      const formData = new FormData();
+
+      // Add all microphone files
+      if (microphoneFiles && microphoneFiles.length > 0) {
+        microphoneFiles.forEach((file, index) => {
+          formData.append('microphone', file, `mic_${index}.${file.name.split('.').pop()}`);
+        });
+      }
+
+      // Add all system files
+      if (systemFiles && systemFiles.length > 0) {
+        systemFiles.forEach((file, index) => {
+          formData.append('system', file, `sys_${index}.${file.name.split('.').pop()}`);
+        });
+      }
+
+      // Add metadata to satisfy backend requirements
+      formData.append('isRawAudio', 'true');
+      formData.append('totalSegments', String(microphoneFiles?.length || 0));
+
+      // Note: upload-segmented-dual endpoint doesn't require transcript data
+      // so we don't need to add segment text, start, end, or duration
+
+      // Calculate dynamic timeout based on total file sizes
+      const totalSize = [...(microphoneFiles || []), ...(systemFiles || [])]
+        .reduce((sum, file) => sum + (file.size || 0), 0);
+      const timeout = this.calculateUploadTimeout({ size: totalSize });
+
+      console.log('📤 Uploading raw audio arrays with timeout:', timeout);
+
+      const response = await this.api.post('/api/audio/upload-segmented-dual', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: timeout,
+        onUploadProgress: (progressEvent) => {
+          if (onProgress) {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            onProgress(percentCompleted);
+          }
+        },
+      });
+
+      console.log('✅ Raw audio arrays upload completed');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Raw audio arrays upload failed:', error);
+      return this.handleError(error);
+    }
+  }
+
   // Upload segmented dual audio files (multiple 1-minute segments)
   async uploadSegmentedDualAudio(microphoneFiles, systemFiles, onProgress = null) {
     try {
       const formData = new FormData();
-      
+
       // Add all microphone files
       microphoneFiles.forEach((file, index) => {
         formData.append('microphone', file);
       });
-      
+
       // Add all system files (if any)
       if (systemFiles && systemFiles.length > 0) {
         systemFiles.forEach((file, index) => {
@@ -473,7 +566,7 @@ class ApiService {
   async getRecordings(options = {}) {
     try {
       const params = new URLSearchParams();
-      
+
       if (options.limit) params.append('limit', options.limit);
       if (options.offset) params.append('offset', options.offset);
       if (options.status) params.append('status', options.status);
@@ -481,7 +574,7 @@ class ApiService {
       if (options.sortOrder) params.append('sortOrder', options.sortOrder);
 
       const response = await this.api.get(`/api/recordings?${params}`);
-      
+
       if (response.data.success) {
         return {
           success: true,
@@ -562,7 +655,7 @@ class ApiService {
   async getTranscripts(options = {}) {
     try {
       const params = new URLSearchParams();
-      
+
       if (options.limit) params.append('limit', options.limit);
       if (options.offset) params.append('offset', options.offset);
       if (options.sortBy) params.append('sortBy', options.sortBy);
@@ -570,7 +663,7 @@ class ApiService {
       if (options.includeSegments !== undefined) params.append('includeSegments', options.includeSegments);
 
       const response = await this.api.get(`/api/transcripts?${params}`);
-      
+
       if (response.data.success) {
         return {
           success: true,
@@ -631,7 +724,7 @@ class ApiService {
     try {
       const params = new URLSearchParams();
       params.append('q', query);
-      
+
       if (options.limit) params.append('limit', options.limit);
       if (options.offset) params.append('offset', options.offset);
 
@@ -642,6 +735,68 @@ class ApiService {
       return {
         success: false,
         error: error.response?.data?.error || 'Search failed'
+      };
+    }
+  }
+
+  // Search for transcripts by recording ID
+  async findTranscriptByRecordingId(recordingId) {
+    try {
+      // Try to search for transcripts that might be associated with this recording
+      const searchResult = await this.searchTranscripts(`recording:${recordingId}`, { limit: 10 });
+
+      if (searchResult.success && searchResult.transcripts?.length > 0) {
+        // Return the first matching transcript
+        return {
+          success: true,
+          transcript: searchResult.transcripts[0]
+        };
+      }
+
+      // If search doesn't work, try to get all transcripts and filter
+      const allTranscripts = await this.getTranscripts({ limit: 100 });
+
+      if (allTranscripts.success && allTranscripts.transcripts) {
+        // Look for transcript with matching recording ID in metadata
+        const matchingTranscript = allTranscripts.transcripts.find(t =>
+          t.recordingId === recordingId ||
+          t.metadata?.recordingId === recordingId ||
+          t.filename?.includes(recordingId)
+        );
+
+        if (matchingTranscript) {
+          return {
+            success: true,
+            transcript: matchingTranscript
+          };
+        }
+      }
+
+      return { success: false, error: 'No transcript found for this recording' };
+    } catch (error) {
+      console.error('Find transcript by recording ID error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to find transcript'
+      };
+    }
+  }
+
+  // Manually link a transcript to a recording
+  async linkTranscriptToRecording(recordingId, transcriptId) {
+    try {
+      // Try to update the recording with the transcript ID
+      const response = await this.api.put(`/api/recordings/${recordingId}`, {
+        transcriptId: transcriptId,
+        transcriptStatus: 'available'
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Link transcript to recording error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to link transcript'
       };
     }
   }
@@ -865,7 +1020,7 @@ class ApiService {
           params.append(key, value);
         }
       });
-      
+
       const response = await this.api.get(`/api/analytics/users?${params.toString()}`);
       return response.data;
     } catch (error) {
@@ -908,7 +1063,7 @@ class ApiService {
           params.append(key, value);
         }
       });
-      
+
       const response = await this.api.get(`/api/analytics/transcripts?${params.toString()}`);
       return response.data;
     } catch (error) {

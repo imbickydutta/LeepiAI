@@ -1,0 +1,376 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Audio Capture Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      button {
+        padding: 15px 25px;
+        margin: 10px;
+        font-size: 16px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      .start {
+        background-color: #28a745;
+        color: white;
+      }
+      .stop {
+        background-color: #dc3545;
+        color: white;
+      }
+      .test {
+        background-color: #007bff;
+        color: white;
+      }
+      .status {
+        margin: 15px 0;
+        padding: 15px;
+        border-radius: 5px;
+        font-weight: bold;
+      }
+      .success {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .error {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+      .info {
+        background-color: #d1ecf1;
+        color: #0c5460;
+      }
+      .log {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        padding: 15px;
+        max-height: 400px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .log div {
+        margin: 2px 0;
+      }
+      audio {
+        width: 100%;
+        margin: 15px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🎙️ Audio Capture Test</h1>
+
+    <div>
+      <button id="testBtn" class="test">🧪 Test getUserMedia</button>
+      <button id="startBtn" class="start">🎙️ Start Audio Recording</button>
+      <button id="stopBtn" class="stop" disabled>🛑 Stop Recording</button>
+      <button id="clearBtn">🗑️ Clear Log</button>
+    </div>
+
+    <div id="status" class="status info">Ready to test audio capture</div>
+
+    <div id="audioPlayer" style="display: none">
+      <h3>🎵 Recorded Audio:</h3>
+      <audio id="audioElement" controls></audio>
+      <button id="downloadBtn" class="test">💾 Download Audio</button>
+    </div>
+
+    <div id="log" class="log"></div>
+
+    <script>
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let isRecording = false;
+      let recordedBlob = null;
+      let currentStream = null;
+
+      function log(message, type = "info") {
+        const logDiv = document.getElementById("log");
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = document.createElement("div");
+        logEntry.className = type;
+        logEntry.innerHTML = `[${timestamp}] ${message}`;
+        logDiv.appendChild(logEntry);
+        logDiv.scrollTop = logDiv.scrollHeight;
+        console.log(message);
+      }
+
+      function updateStatus(message, type = "info") {
+        const statusDiv = document.getElementById("status");
+        statusDiv.className = `status ${type}`;
+        statusDiv.textContent = message;
+      }
+
+      function clearLog() {
+        document.getElementById("log").innerHTML = "";
+      }
+
+      async function testGetUserMedia() {
+        try {
+          log("🧪 Testing getUserMedia availability...");
+          updateStatus("Testing getUserMedia...", "info");
+
+          // Check if getUserMedia is available
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error("getUserMedia not available");
+          }
+
+          log("✅ getUserMedia is available");
+          log("📋 Navigator:", !!navigator);
+          log("📋 MediaDevices:", !!navigator.mediaDevices);
+          log("📋 getUserMedia:", !!navigator.mediaDevices.getUserMedia);
+          log("📋 User Agent:", navigator.userAgent);
+
+          // Test with audio constraints
+          log("🧪 Testing audio capture...");
+          const testStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+
+          log("✅ Audio-only capture test successful!");
+          log(
+            "📊 Stream tracks:",
+            testStream
+              .getTracks()
+              .map((t) => t.kind)
+              .join(", ")
+          );
+          log(
+            "📊 Track details:",
+            JSON.stringify(
+              testStream.getTracks().map((t) => ({
+                kind: t.kind,
+                enabled: t.enabled,
+                muted: t.muted,
+                readyState: t.readyState,
+              })),
+              null,
+              2
+            )
+          );
+
+          // Stop the test stream
+          testStream.getTracks().forEach((track) => track.stop());
+          log("🛑 Test stream stopped");
+
+          updateStatus("getDisplayMedia test successful!", "success");
+        } catch (error) {
+          log(`❌ getDisplayMedia test failed: ${error.message}`, "error");
+          log(`❌ Error name: ${error.name}`, "error");
+          log(`❌ Full error:`, "error");
+          console.error(error);
+          updateStatus(`Test failed: ${error.message}`, "error");
+        }
+      }
+
+      async function startRecording() {
+        try {
+          log("🎙️ Starting system audio recording...");
+          updateStatus("Requesting system audio access...", "info");
+
+          // Check if getUserMedia is available
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error("getUserMedia not available");
+          }
+
+          log("✅ getUserMedia available, requesting stream...");
+
+          // Use the same approach as test-browser-audio.html - getUserMedia for audio
+          // This is more reliable than getDisplayMedia on Windows
+          log("🎙️ Attempting audio capture using getUserMedia...");
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+
+          log("✅ Audio capture succeeded using getUserMedia");
+
+          currentStream = stream;
+          log("✅ Audio stream obtained");
+          log("📊 Stream ID:", stream.id);
+          log("📊 Stream active:", stream.active);
+          log(
+            "📊 Tracks:",
+            stream
+              .getTracks()
+              .map((t) => t.kind)
+              .join(", ")
+          );
+
+          // Check if we actually have audio tracks
+          const audioTracks = stream.getAudioTracks();
+          const videoTracks = stream.getVideoTracks();
+
+          log("📊 Audio tracks count:", audioTracks.length);
+          log("📊 Video tracks count:", videoTracks.length);
+
+          if (audioTracks.length === 0) {
+            throw new Error(
+              "No audio tracks found in the stream. Audio capture is not working."
+            );
+          }
+
+          // Log detailed track information
+          audioTracks.forEach((track, index) => {
+            log(`📊 Audio track ${index}:`, {
+              id: track.id,
+              enabled: track.enabled,
+              muted: track.muted,
+              readyState: track.readyState,
+              label: track.label,
+            });
+          });
+
+          // Create MediaRecorder with simple approach
+          mediaRecorder = new MediaRecorder(stream);
+          log(
+            `✅ MediaRecorder created with MIME type: ${mediaRecorder.mimeType}`
+          );
+          log(`✅ MediaRecorder state: ${mediaRecorder.state}`);
+
+          // Set up event handlers
+          audioChunks = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              audioChunks.push(event.data);
+              log(`📦 Audio chunk received: ${event.data.size} bytes`);
+            } else {
+              log("⚠️ Empty audio chunk received");
+            }
+          };
+
+          mediaRecorder.onstart = () => {
+            log("🎙️ MediaRecorder started");
+            log(`✅ MediaRecorder state: ${mediaRecorder.state}`);
+            isRecording = true;
+            document.getElementById("startBtn").disabled = true;
+            document.getElementById("stopBtn").disabled = false;
+            updateStatus("Recording audio...", "success");
+          };
+
+          mediaRecorder.onstop = async () => {
+            log("🛑 MediaRecorder stopped");
+            log(`📊 Total chunks: ${audioChunks.length}`);
+            log(
+              `📊 Total size: ${audioChunks.reduce((sum, chunk) => sum + chunk.size, 0)} bytes`
+            );
+
+            if (audioChunks.length > 0) {
+              recordedBlob = new Blob(audioChunks, { type: "audio/webm" });
+              log(`✅ Created audio blob: ${recordedBlob.size} bytes`);
+
+              // Create audio URL for playback
+              const audioUrl = URL.createObjectURL(recordedBlob);
+              const audioElement = document.getElementById("audioElement");
+              audioElement.src = audioUrl;
+              document.getElementById("audioPlayer").style.display = "block";
+
+              updateStatus(
+                `Recording completed! ${recordedBlob.size} bytes`,
+                "success"
+              );
+            } else {
+              log("❌ No audio chunks received", "error");
+              updateStatus("No audio data recorded", "error");
+            }
+
+            isRecording = false;
+            document.getElementById("startBtn").disabled = false;
+            document.getElementById("stopBtn").disabled = true;
+
+            // Stop all tracks
+            if (currentStream) {
+              currentStream.getTracks().forEach((track) => {
+                track.stop();
+                log(`🛑 Stopped track: ${track.kind}`);
+              });
+              currentStream = null;
+            }
+          };
+
+          mediaRecorder.onerror = (event) => {
+            log(`❌ MediaRecorder error: ${event.error}`, "error");
+            updateStatus(`Recording error: ${event.error}`, "error");
+          };
+
+          // Start recording
+          mediaRecorder.start(1000); // 1-second timeslice
+          log("🎙️ Started recording with 1-second timeslice");
+        } catch (error) {
+          log(`❌ Failed to start recording: ${error.message}`, "error");
+          log(`❌ Error name: ${error.name}`, "error");
+          log(`❌ Full error:`, "error");
+          console.error(error);
+          updateStatus(`Recording failed: ${error.message}`, "error");
+        }
+      }
+
+      function stopRecording() {
+        if (mediaRecorder && isRecording) {
+          log("�� Stopping recording...");
+          mediaRecorder.stop();
+        }
+      }
+
+      function downloadAudio() {
+        if (recordedBlob) {
+          const url = URL.createObjectURL(recordedBlob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `audio_${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.webm`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          log("💾 Download started");
+        }
+      }
+
+      // Event listeners
+      document
+        .getElementById("testBtn")
+        .addEventListener("click", testGetUserMedia);
+      document
+        .getElementById("startBtn")
+        .addEventListener("click", startRecording);
+      document
+        .getElementById("stopBtn")
+        .addEventListener("click", stopRecording);
+      document.getElementById("clearBtn").addEventListener("click", clearLog);
+      document
+        .getElementById("downloadBtn")
+        .addEventListener("click", downloadAudio);
+
+      log("🚀 Audio capture test ready");
+      log("📋 Browser: " + navigator.userAgent);
+      log(
+        "📋 MediaDevices available: " +
+          !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      );
+      log("📋 MediaRecorder available: " + !!window.MediaRecorder);
+      updateStatus("Ready to test audio capture", "info");
+    </script>
+  </body>
+</html>

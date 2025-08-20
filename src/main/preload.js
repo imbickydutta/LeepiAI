@@ -9,11 +9,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stopRecording: () => ipcRenderer.invoke('audio-stop-recording'),
     startDualRecording: () => ipcRenderer.invoke('audio-start-dual-recording'),
     stopDualRecording: () => ipcRenderer.invoke('audio-stop-dual-recording'),
-    getDevices: () => ipcRenderer.invoke('audio-get-devices')
+    getDevices: () => ipcRenderer.invoke('audio-get-devices'),
+    resetRecordingState: () => ipcRenderer.invoke('audio-reset-recording-state')
   },
 
   // Windows WebRTC audio data saving
-  saveAudioData: (segmentId, type, audioData) => ipcRenderer.invoke('save-audio-data', { segmentId, type, audioData }),
+  saveAudioData: (filePath, audioData, type) => ipcRenderer.invoke('save-audio-data', { filePath, audioData, type }),
 
   // Local storage operations
   storage: {

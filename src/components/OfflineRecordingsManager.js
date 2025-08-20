@@ -86,7 +86,7 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
   const handleRetryUpload = async (recording) => {
     try {
       setUploading(true);
-      
+
       // Check if recording has exceeded max attempts
       if (recording.attempts >= retrySettings.maxAttempts) {
         onError(`Recording has exceeded maximum retry attempts (${retrySettings.maxAttempts})`);
@@ -102,23 +102,33 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
 
       // Attempt upload based on recording type
       let result;
-      if (recording.outputFiles && recording.outputFiles.length > 0 && 
-          recording.inputFiles && recording.inputFiles.length > 0) {
+      if (recording.outputFiles && recording.outputFiles.length > 0 &&
+        recording.inputFiles && recording.inputFiles.length > 0) {
         // Dual audio upload
-        result = await ApiService.uploadSegmentedDualAudio(
+        result = await ApiService.uploadRawAudioArrays(
           recording.inputFiles,
           recording.outputFiles,
           (progress) => {
             console.log(`📤 Upload progress for ${recording.id}: ${progress}%`);
+          },
+          {
+            segments: recording.segments || [],
+            totalDuration: recording.totalDuration || 0,
+            totalSegments: recording.totalSegments || 0
           }
         );
       } else if (recording.inputFiles && recording.inputFiles.length > 0) {
         // Single audio upload (segmented)
-        result = await ApiService.uploadSegmentedDualAudio(
+        result = await ApiService.uploadRawAudioArrays(
           recording.inputFiles,
           [], // No system audio
           (progress) => {
             console.log(`📤 Upload progress for ${recording.id}: ${progress}%`);
+          },
+          {
+            segments: recording.segments || [],
+            totalDuration: recording.totalDuration || 0,
+            totalSegments: recording.totalSegments || 0
           }
         );
       } else {
@@ -129,11 +139,11 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
         // Mark as successfully uploaded
         await OfflineStorageService.markAsUploaded(recording.id, result);
         onSuccess(`Recording ${recording.id} uploaded successfully!`);
-        
+
         // Refresh data
         await loadOfflineRecordings();
         await loadStorageStats();
-        
+
         // Refresh transcripts if callback provided
         if (onRefreshTranscripts) {
           await onRefreshTranscripts();
@@ -142,18 +152,18 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
         // Mark as failed
         await OfflineStorageService.markAsFailed(recording.id, result.error);
         onError(`Upload failed: ${result.error}`);
-        
+
         // Refresh data
         await loadOfflineRecordings();
         await loadStorageStats();
       }
     } catch (error) {
       console.error('❌ Retry upload failed:', error);
-      
+
       // Mark as failed
       await OfflineStorageService.markAsFailed(recording.id, error.message);
       onError(`Retry failed: ${error.message}`);
-      
+
       // Refresh data
       await loadOfflineRecordings();
       await loadStorageStats();
@@ -164,30 +174,30 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
 
   const handleRetryAll = async () => {
     const pendingRecordings = offlineRecordings.filter(r => r.status === 'pending' || r.status === 'failed');
-    
+
     if (pendingRecordings.length === 0) {
       onSuccess('No recordings to retry');
       return;
     }
 
     setUploading(true);
-    
+
     try {
       for (const recording of pendingRecordings) {
         if (recording.attempts >= retrySettings.maxAttempts) {
           console.log(`⚠️ Skipping ${recording.id} - exceeded max attempts`);
           continue;
         }
-        
+
         console.log(`🔄 Retrying ${recording.id} (${pendingRecordings.indexOf(recording) + 1}/${pendingRecordings.length})`);
         await handleRetryUpload(recording);
-        
+
         // Add delay between attempts
         if (pendingRecordings.indexOf(recording) < pendingRecordings.length - 1) {
           await new Promise(resolve => setTimeout(resolve, retrySettings.delayBetweenAttempts));
         }
       }
-      
+
       onSuccess(`Retry completed for ${pendingRecordings.length} recordings`);
     } catch (error) {
       console.error('❌ Bulk retry failed:', error);
@@ -292,30 +302,30 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
 
           {storageStats && (
             <Box display="flex" gap={2} flexWrap="wrap">
-              <Chip 
-                label={`Total: ${storageStats.totalRecordings}`} 
-                color="default" 
-                variant="outlined" 
+              <Chip
+                label={`Total: ${storageStats.totalRecordings}`}
+                color="default"
+                variant="outlined"
               />
-              <Chip 
-                label={`Pending: ${storageStats.pendingRecordings}`} 
-                color="warning" 
-                variant="outlined" 
+              <Chip
+                label={`Pending: ${storageStats.pendingRecordings}`}
+                color="warning"
+                variant="outlined"
               />
-              <Chip 
-                label={`Failed: ${storageStats.failedRecordings}`} 
-                color="error" 
-                variant="outlined" 
+              <Chip
+                label={`Failed: ${storageStats.failedRecordings}`}
+                color="error"
+                variant="outlined"
               />
-              <Chip 
-                label={`Completed: ${storageStats.completedRecordings}`} 
-                color="success" 
-                variant="outlined" 
+              <Chip
+                label={`Completed: ${storageStats.completedRecordings}`}
+                color="success"
+                variant="outlined"
               />
-              <Chip 
-                label={`Size: ${storageStats.totalSize}`} 
-                color="info" 
-                variant="outlined" 
+              <Chip
+                label={`Size: ${storageStats.totalSize}`}
+                color="info"
+                variant="outlined"
               />
             </Box>
           )}
@@ -356,17 +366,17 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
 
                   <Box display="flex" gap={1} mb={1}>
                     {recording.inputFiles && recording.inputFiles.length > 0 && (
-                      <Chip 
-                        label={`MIC: ${recording.inputFiles.length} files (${formatFileSize(recording.inputFiles)})`} 
-                        size="small" 
-                        variant="outlined" 
+                      <Chip
+                        label={`MIC: ${recording.inputFiles.length} files (${formatFileSize(recording.inputFiles)})`}
+                        size="small"
+                        variant="outlined"
                       />
                     )}
                     {recording.outputFiles && recording.outputFiles.length > 0 && (
-                      <Chip 
-                        label={`SYS: ${recording.outputFiles.length} files (${formatFileSize(recording.outputFiles)})`} 
-                        size="small" 
-                        variant="outlined" 
+                      <Chip
+                        label={`SYS: ${recording.outputFiles.length} files (${formatFileSize(recording.outputFiles)})`}
+                        size="small"
+                        variant="outlined"
                       />
                     )}
                   </Box>
@@ -426,16 +436,16 @@ function OfflineRecordingsManager({ onSuccess, onError, onRefreshTranscripts }) 
                   </IconButton>
 
                   {(recording.status === 'pending' || recording.status === 'failed') && (
-                                      <Tooltip title="Retry Upload">
-                    <IconButton
-                      onClick={() => handleRetryUpload(recording)}
-                      disabled={uploading}
-                      color="primary"
-                      size="small"
-                    >
-                      <Replay />
-                    </IconButton>
-                  </Tooltip>
+                    <Tooltip title="Retry Upload">
+                      <IconButton
+                        onClick={() => handleRetryUpload(recording)}
+                        disabled={uploading}
+                        color="primary"
+                        size="small"
+                      >
+                        <Replay />
+                      </IconButton>
+                    </Tooltip>
                   )}
 
                   <Tooltip title="Delete">

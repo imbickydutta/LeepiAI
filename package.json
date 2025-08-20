@@ -12,9 +12,9 @@
     "build": "react-scripts build",
     "build-electron": "electron-builder",
     "dist": "npm run build && npm run build-electron",
-    "dist-mac": "npm run build && electron-builder --mac && npm run fix-macos-permissions",
-    "dist-win": "npm run build && electron-builder --win",
-    "dist-linux": "npm run build && electron-builder --linux",
+    "dist-mac": "cross-env NODE_ENV=production npm run build && electron-builder --mac && npm run fix-macos-permissions",
+    "dist-win": "cross-env NODE_ENV=production npm run build && electron-builder --win",
+    "dist-linux": "cross-env NODE_ENV=production npm run build && electron-builder --linux",
     "fix-macos-permissions": "scripts/fix-macos-permissions.sh",
     "dist-all": "npm run build && electron-builder --mac --win --linux",
     "pack": "npm run build && electron-builder --dir",
@@ -37,6 +37,7 @@
   "devDependencies": {
     "@electron-forge/maker-squirrel": "^7.8.1",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "electron": "^28.0.0",
     "electron-builder": "^24.6.4",
     "wait-on": "^7.2.0"
@@ -50,15 +51,12 @@
     "electron-is-dev": "^2.0.0",
     "electron-store": "^8.1.0",
     "fs-extra": "^11.3.0",
-    "node-record-lpcm16": "^1.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
     "react-scripts": "5.0.1",
     "remark-gfm": "^4.0.1",
-    "speaker": "^0.5.5",
     "uuid": "^11.1.0",
-
     "webm-to-wav-converter": "^1.1.0"
   },
   "build": {
@@ -68,7 +66,7 @@
     "cscLink": null,
     "cscKeyPassword": null,
     "directories": {
-      "output": "dist",
+      "output": "build-output",
       "buildResources": "build-resources"
     },
     "files": [
@@ -143,13 +141,14 @@
     "win": {
       "target": [
         {
-          "target": "portable",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ],
-      "forceCodeSigning": false
+      "sign": false,
+      "verifyUpdateCodeSignature": false
     },
     "linux": {
       "icon": "build-resources/icon.png",

@@ -47,7 +47,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
   const [selectedOutputDevice, setSelectedOutputDevice] = useState('default');
   const [useDeviceSelection, setUseDeviceSelection] = useState(false);
   const [showSetupHelp, setShowSetupHelp] = useState(false);
-  
+
   const timerRef = useRef(null);
   const recordingSessionRef = useRef(null);
 
@@ -104,10 +104,10 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
   const handleDeviceSettingsSave = () => {
     setUseDeviceSelection(true);
     setShowDeviceSettings(false);
-    
+
     const inputDeviceName = audioDevices.input.find(d => d.id === selectedInputDevice)?.name || selectedInputDevice;
     const outputDeviceName = audioDevices.output.find(d => d.id === selectedOutputDevice)?.name || selectedOutputDevice;
-    
+
     onSuccess(`Device selection enabled:\n• Input: ${inputDeviceName}\n• Output: ${outputDeviceName}`);
   };
 
@@ -121,20 +121,20 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
     try {
       setIsRecording(true);
       setRecordingTime(0);
-      
+
       // TEMP_DEBUG_FRONTEND_001: Log recording start
       console.log('🎙️ TEMP_DEBUG_FRONTEND_001 - Starting recording...');
       console.log('🔧 TEMP_DEBUG_FRONTEND_001 - IPC available:', !!window.electronAPI);
       console.log('🔧 TEMP_DEBUG_FRONTEND_001 - Audio API available:', !!window.electronAPI?.audio);
       console.log('🔧 TEMP_DEBUG_FRONTEND_001 - startDualRecording available:', !!window.electronAPI?.audio?.startDualRecording);
-      
+
       const result = await window.electronAPI.audio.startDualRecording();
-      
+
       // TEMP_DEBUG_FRONTEND_002: Log recording result
       console.log('✅ TEMP_DEBUG_FRONTEND_002 - Recording started:', result);
       console.log('🔧 TEMP_DEBUG_FRONTEND_002 - Result type:', typeof result);
       console.log('🔧 TEMP_DEBUG_FRONTEND_002 - Result keys:', Object.keys(result || {}));
-      
+
       if (result.success) {
         recordingSessionRef.current = result.sessionId;
         onSuccess('✅ Dual recording started: Microphone + System Audio (Native)');
@@ -142,7 +142,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
         setIsRecording(false);
         onError(result.error || 'Failed to start recording');
       }
-      
+
     } catch (error) {
       setIsRecording(false);
       console.error('❌ TEMP_DEBUG_FRONTEND_001 - Failed to start recording:', error);
@@ -158,8 +158,8 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
 
 
       const result = await window.electronAPI.audio.stopDualRecording();
-      
-      
+
+
       if (result.success) {
         // Check if dualAudioData exists
         if (!result.dualAudioData) {
@@ -167,9 +167,9 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           onError('Recording completed but no audio data was generated. Please check your audio devices and try again.');
           return;
         }
-        
+
         setProcessingStatus(`Processing ${result.dualAudioData?.totalSegments || 0} audio segments...`);
-        
+
         // TEMP_DEBUG_FRONTEND_003: Log recording results
         console.log('✅ TEMP_DEBUG_FRONTEND_003 - Segmented recording stopped:', {
           segments: result.dualAudioData?.totalSegments,
@@ -192,15 +192,15 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
         if (segments.length > 0) {
           for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
-            
+
             const inputFile = await createFileFromPath(segment.inputFile, `microphone-segment-${i + 1}`);
-            
+
             // Only try to create output file if it exists and has output audio
             let outputFile = null;
             if (segment.hasOutputAudio && segment.outputFile) {
               outputFile = await createFileFromPath(segment.outputFile, `system-segment-${i + 1}`);
             }
-            
+
             if (inputFile) inputFiles.push(inputFile);
             if (outputFile) outputFiles.push(outputFile);
           }
@@ -208,13 +208,13 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           // Fallback: use file paths directly
           for (let i = 0; i < inputFilePaths.length; i++) {
             const inputFile = await createFileFromPath(inputFilePaths[i], `microphone-segment-${i + 1}`);
-            
+
             // Only try to create output file if it exists
             let outputFile = null;
             if (outputFilePaths[i]) {
               outputFile = await createFileFromPath(outputFilePaths[i], `system-segment-${i + 1}`);
             }
-            
+
             if (inputFile) inputFiles.push(inputFile);
             if (outputFile) outputFiles.push(outputFile);
           }
@@ -231,7 +231,8 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           hasDualAudio: inputFiles.length > 0 && outputFiles.length > 0,
           isSegmented: true,
           totalSegments: result.dualAudioData?.totalSegments || inputFiles.length,
-          totalDuration: result.dualAudioData?.totalDuration || 0
+          totalDuration: result.dualAudioData?.totalDuration || 0,
+          segments: result.dualAudioData?.segments || [] // Add segments data for accurate timestamps
         };
 
         console.log('📤 Final dual audio data:', {
@@ -241,7 +242,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           isSegmented: dualAudioData.isSegmented,
           totalSegments: dualAudioData.totalSegments
         });
-        
+
         // TEMP_DEBUG_FRONTEND_004: Show file details
         console.log('📁 TEMP_DEBUG_FRONTEND_004 - Input files details:');
         inputFiles.forEach((file, index) => {
@@ -252,7 +253,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
             type: file.type
           });
         });
-        
+
         console.log('📁 TEMP_DEBUG_FRONTEND_004 - Output files details:');
         outputFiles.forEach((file, index) => {
           console.log(`  Output ${index}:`, {
@@ -276,7 +277,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
         setRecordingTime(0);
         recordingSessionRef.current = null;
         setProcessingStatus('');
-        
+
       } else {
         onError(result.error || 'Failed to stop recording');
       }
@@ -296,18 +297,18 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
         console.log('⚠️ No file path provided, skipping file creation');
         return null;
       }
-      
+
       console.log(`🔍 Attempting to read file: ${filePath}`);
       console.log(`🔍 File prefix: ${prefix}`);
-      
+
       // Read the file through Electron IPC
       const result = await window.electronAPI.file.readAudioFile(filePath);
       console.log(`📁 IPC result for ${filePath}:`, result);
-      
+
       if (result.success) {
         const filename = `${prefix}-${Date.now()}.wav`;
         console.log(`✅ Successfully read file, creating File object: ${filename}`);
-        
+
         // Create a File object from the buffer
         const blob = new Blob([new Uint8Array(result.buffer)], { type: 'audio/wav' });
         const file = new File([blob], filename, { type: 'audio/wav' });
@@ -329,7 +330,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
 
   const toggleMicMute = async () => {
     if (!isRecording) return;
-    
+
     try {
       // For now, just toggle the state locally
       // In the original implementation, this would control the recording device
@@ -368,232 +369,232 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
 
   return (
     <>
-      <Card sx={{ 
+      <Card sx={{
         background: 'linear-gradient(145deg, #1e1e1e 0%, #2a2a2a 100%)',
         border: '1px solid #333',
       }}>
         <CardContent>
-        {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            Audio Recording
-          </Typography>
-          
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Chip 
-              label={getRecordingStatusText()}
-              color={getRecordingStatusColor()}
-              size="small"
-              icon={getRecordingStatusIcon()}
-            />
-            
-            <Tooltip title="Audio Device Settings">
-              <IconButton 
-                size="small" 
-                onClick={handleDeviceSettingsOpen}
-                color={useDeviceSelection ? 'primary' : 'default'}
-              >
-                <SettingsIcon />
-              </IconButton>
-            </Tooltip>
+          {/* Header */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Audio Recording
+            </Typography>
+
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Chip
+                label={getRecordingStatusText()}
+                color={getRecordingStatusColor()}
+                size="small"
+                icon={getRecordingStatusIcon()}
+              />
+
+              <Tooltip title="Audio Device Settings">
+                <IconButton
+                  size="small"
+                  onClick={handleDeviceSettingsOpen}
+                  color={useDeviceSelection ? 'primary' : 'default'}
+                >
+                  <SettingsIcon />
+                </IconButton>
+              </Tooltip>
+            </Box>
           </Box>
-        </Box>
 
-        {/* Recording Timer and Progress */}
-        <Box sx={{ textAlign: 'center', mb: 3 }}>
-          <Typography 
-            variant="h3" 
-            sx={{ 
-              fontWeight: 600,
-              fontFamily: 'monospace',
-              color: isRecording ? 'error.main' : 'text.primary',
-              mb: 1,
-            }}
-          >
-            {formatTime(recordingTime)}
-          </Typography>
-          
-          {isRecording && (
-            <LinearProgress 
-              sx={{ 
-                mb: 2,
-                height: 6,
-                borderRadius: 3,
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                '& .MuiLinearProgress-bar': {
-                  backgroundColor: 'error.main',
-                },
-              }}
-            />
-          )}
-        </Box>
-
-        {/* Recording Controls */}
-        <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-          {!isRecording ? (
-            <Button
-              variant="contained"
-              color="primary"
-              size="large"
-              onClick={startRecording}
-              disabled={isProcessing}
-              startIcon={<Mic />}
+          {/* Recording Timer and Progress */}
+          <Box sx={{ textAlign: 'center', mb: 3 }}>
+            <Typography
+              variant="h3"
               sx={{
-                px: 4,
-                py: 1.5,
-                borderRadius: 2,
                 fontWeight: 600,
-                background: 'linear-gradient(45deg, #00bcd4 30%, #4dd0e1 90%)',
-                '&:hover': {
-                  background: 'linear-gradient(45deg, #00838f 30%, #00bcd4 90%)',
-                },
+                fontFamily: 'monospace',
+                color: isRecording ? 'error.main' : 'text.primary',
+                mb: 1,
               }}
             >
-              Start Recording
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="contained"
-                color="error"
-                size="large"
-                onClick={stopRecording}
-                disabled={isProcessing}
-                startIcon={<Stop />}
-                sx={{
-                  px: 4,
-                  py: 1.5,
-                  borderRadius: 2,
-                  fontWeight: 600,
-                }}
-              >
-                Stop Recording
-              </Button>
-              
-              <Button
-                variant={isMicMuted ? "contained" : "outlined"}
-                color={isMicMuted ? "warning" : "primary"}
-                size="large"
-                onClick={toggleMicMute}
-                disabled={isProcessing}
-                startIcon={isMicMuted ? <MicOff /> : <Mic />}
-                sx={{
-                  px: 3,
-                  py: 1.5,
-                  borderRadius: 2,
-                  fontWeight: 600,
-                  backgroundColor: isMicMuted ? 'warning.main' : 'transparent',
-                  '&:hover': {
-                    backgroundColor: isMicMuted ? 'warning.dark' : 'primary.main',
-                    color: 'white',
-                  },
-                }}
-              >
-                {isMicMuted ? 'Unmute' : 'Mute'}
-              </Button>
-            </>
-          )}
-        </Box>
-
-        {/* Processing Status */}
-        {(isProcessing || processingStatus) && (
-          <Box sx={{ 
-            p: 2, 
-            backgroundColor: 'rgba(255, 152, 0, 0.1)',
-            borderRadius: 1,
-            border: '1px solid rgba(255, 152, 0, 0.3)',
-            mb: 2,
-          }}>
-            <Typography variant="body2" sx={{ textAlign: 'center', color: 'warning.main' }}>
-              {processingStatus || 'Processing...'}
+              {formatTime(recordingTime)}
             </Typography>
-            {isProcessing && (
-              <LinearProgress 
-                sx={{ 
-                  mt: 1,
-                  height: 4,
-                  borderRadius: 2,
-                  backgroundColor: 'rgba(255, 152, 0, 0.2)',
+
+            {isRecording && (
+              <LinearProgress
+                sx={{
+                  mb: 2,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
                   '& .MuiLinearProgress-bar': {
-                    backgroundColor: 'warning.main',
+                    backgroundColor: 'error.main',
                   },
                 }}
               />
             )}
           </Box>
-        )}
 
-        {/* Audio Device Info with Collapsible Setup Help */}
-        <Box sx={{ 
-          p: 1.5, 
-          backgroundColor: 'rgba(255, 255, 255, 0.05)',
-          borderRadius: 1,
-          mb: 2,
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <VolumeUp sx={{ fontSize: 16, color: 'text.secondary' }} />
-              <Typography variant="body2" color="text.secondary">
-                {audioDevices.input.length + audioDevices.output.length} devices detected
-              </Typography>
-            </Box>
-            
-            <Tooltip title="Setup Help">
-              <IconButton 
-                size="small" 
-                onClick={() => setShowSetupHelp(!showSetupHelp)}
-                sx={{ 
-                  color: 'text.secondary',
-                  transform: showSetupHelp ? 'rotate(180deg)' : 'rotate(0deg)',
-                  transition: 'transform 0.3s ease',
+          {/* Recording Controls */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+            {!isRecording ? (
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                onClick={startRecording}
+                disabled={isProcessing}
+                startIcon={<Mic />}
+                sx={{
+                  px: 4,
+                  py: 1.5,
+                  borderRadius: 2,
+                  fontWeight: 600,
+                  background: 'linear-gradient(45deg, #00bcd4 30%, #4dd0e1 90%)',
+                  '&:hover': {
+                    background: 'linear-gradient(45deg, #00838f 30%, #00bcd4 90%)',
+                  },
                 }}
               >
-                <ExpandMore />
-              </IconButton>
-            </Tooltip>
+                Start Recording
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="contained"
+                  color="error"
+                  size="large"
+                  onClick={stopRecording}
+                  disabled={isProcessing}
+                  startIcon={<Stop />}
+                  sx={{
+                    px: 4,
+                    py: 1.5,
+                    borderRadius: 2,
+                    fontWeight: 600,
+                  }}
+                >
+                  Stop Recording
+                </Button>
+
+                <Button
+                  variant={isMicMuted ? "contained" : "outlined"}
+                  color={isMicMuted ? "warning" : "primary"}
+                  size="large"
+                  onClick={toggleMicMute}
+                  disabled={isProcessing}
+                  startIcon={isMicMuted ? <MicOff /> : <Mic />}
+                  sx={{
+                    px: 3,
+                    py: 1.5,
+                    borderRadius: 2,
+                    fontWeight: 600,
+                    backgroundColor: isMicMuted ? 'warning.main' : 'transparent',
+                    '&:hover': {
+                      backgroundColor: isMicMuted ? 'warning.dark' : 'primary.main',
+                      color: 'white',
+                    },
+                  }}
+                >
+                  {isMicMuted ? 'Unmute' : 'Mute'}
+                </Button>
+              </>
+            )}
           </Box>
 
-          <Collapse in={showSetupHelp}>
-            <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
-              <Typography variant="caption" color="primary.light" sx={{ display: 'block', mb: 1 }}>
-                💡 Native Dual Audio Recording
+          {/* Processing Status */}
+          {(isProcessing || processingStatus) && (
+            <Box sx={{
+              p: 2,
+              backgroundColor: 'rgba(255, 152, 0, 0.1)',
+              borderRadius: 1,
+              border: '1px solid rgba(255, 152, 0, 0.3)',
+              mb: 2,
+            }}>
+              <Typography variant="body2" sx={{ textAlign: 'center', color: 'warning.main' }}>
+                {processingStatus || 'Processing...'}
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 2 }}>
-                • <strong>Microphone:</strong> Your voice and ambient audio (native capture)
-                <br />
-                • <strong>System Audio:</strong> Captured via BlackHole virtual audio device
-                <br />
-                • <strong>Transcription:</strong> Both sources are identified as MIC/SYS in transcript
-              </Typography>
-              
-              <Typography variant="caption" color="warning.light" sx={{ display: 'block', mb: 1 }}>
-                ⚙️ BlackHole Setup Required
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                For system audio capture to work:
-                <br />
-                1. Install BlackHole: <code style={{ backgroundColor: 'rgba(255,255,255,0.1)', padding: '2px 4px', borderRadius: '2px' }}>brew install blackhole-2ch</code>
-                <br />
-                2. Reboot your Mac after installation
-                <br />
-                3. Set up Multi-Output Device in Audio MIDI Setup
-                <br />
-                4. Route system audio through BlackHole
-                <br />
-                <br />
-                <strong>Status:</strong> Native recording with WAV files - much more reliable than web-based capture!
-                <br />
-                📖 See BLACKHOLE_SETUP.md for detailed instructions
-              </Typography>
+              {isProcessing && (
+                <LinearProgress
+                  sx={{
+                    mt: 1,
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: 'rgba(255, 152, 0, 0.2)',
+                    '& .MuiLinearProgress-bar': {
+                      backgroundColor: 'warning.main',
+                    },
+                  }}
+                />
+              )}
             </Box>
-          </Collapse>
-        </Box>
+          )}
+
+          {/* Audio Device Info with Collapsible Setup Help */}
+          <Box sx={{
+            p: 1.5,
+            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            borderRadius: 1,
+            mb: 2,
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <VolumeUp sx={{ fontSize: 16, color: 'text.secondary' }} />
+                <Typography variant="body2" color="text.secondary">
+                  {audioDevices.input.length + audioDevices.output.length} devices detected
+                </Typography>
+              </Box>
+
+              <Tooltip title="Setup Help">
+                <IconButton
+                  size="small"
+                  onClick={() => setShowSetupHelp(!showSetupHelp)}
+                  sx={{
+                    color: 'text.secondary',
+                    transform: showSetupHelp ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.3s ease',
+                  }}
+                >
+                  <ExpandMore />
+                </IconButton>
+              </Tooltip>
+            </Box>
+
+            <Collapse in={showSetupHelp}>
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                <Typography variant="caption" color="primary.light" sx={{ display: 'block', mb: 1 }}>
+                  💡 Native Dual Audio Recording
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 2 }}>
+                  • <strong>Microphone:</strong> Your voice and ambient audio (native capture)
+                  <br />
+                  • <strong>System Audio:</strong> Captured via BlackHole virtual audio device
+                  <br />
+                  • <strong>Transcription:</strong> Both sources are identified as MIC/SYS in transcript
+                </Typography>
+
+                <Typography variant="caption" color="warning.light" sx={{ display: 'block', mb: 1 }}>
+                  ⚙️ BlackHole Setup Required
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                  For system audio capture to work:
+                  <br />
+                  1. Install BlackHole: <code style={{ backgroundColor: 'rgba(255,255,255,0.1)', padding: '2px 4px', borderRadius: '2px' }}>brew install blackhole-2ch</code>
+                  <br />
+                  2. Reboot your Mac after installation
+                  <br />
+                  3. Set up Multi-Output Device in Audio MIDI Setup
+                  <br />
+                  4. Route system audio through BlackHole
+                  <br />
+                  <br />
+                  <strong>Status:</strong> Native recording with WAV files - much more reliable than web-based capture!
+                  <br />
+                  📖 See BLACKHOLE_SETUP.md for detailed instructions
+                </Typography>
+              </Box>
+            </Collapse>
+          </Box>
         </CardContent>
       </Card>
 
       {/* Device Settings Dialog */}
-      <Dialog 
-        open={showDeviceSettings} 
+      <Dialog
+        open={showDeviceSettings}
         onClose={handleDeviceSettingsClose}
         maxWidth="md"
         fullWidth
@@ -604,8 +605,8 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           },
         }}
       >
-        <DialogTitle sx={{ 
-          backgroundColor: '#1a1a1a', 
+        <DialogTitle sx={{
+          backgroundColor: '#1a1a1a',
           borderBottom: '1px solid #333',
           display: 'flex',
           alignItems: 'center',
@@ -614,10 +615,10 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           <SettingsIcon />
           Audio Device Configuration
         </DialogTitle>
-        
+
         <DialogContent sx={{ pt: 3 }}>
           <Alert severity="info" sx={{ mb: 3 }}>
-            Configure your audio devices: select your preferred microphone for input and speaker for output reference. 
+            Configure your audio devices: select your preferred microphone for input and speaker for output reference.
             System audio is captured via screen sharing during recording.
           </Alert>
 
@@ -641,7 +642,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
               <AudiotrackOutlined color="primary" />
               <Typography variant="h6">Microphone (Input) Device</Typography>
             </Box>
-            
+
             <FormControl fullWidth variant="outlined">
               <InputLabel>Select Input Device</InputLabel>
               <Select
@@ -670,7 +671,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
               <SpeakerOutlined color="secondary" />
               <Typography variant="h6">Speaker (Output) Device</Typography>
             </Box>
-            
+
             <FormControl fullWidth variant="outlined">
               <InputLabel>Select Output Device</InputLabel>
               <Select
@@ -692,7 +693,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
 
             <Alert severity="info" sx={{ mt: 2 }}>
               <Typography variant="body2">
-                <strong>Note:</strong> Output device selection is for reference only. 
+                <strong>Note:</strong> Output device selection is for reference only.
                 System audio is captured via screen sharing, not directly from the output device.
                 Make sure to enable "Share Audio" when prompted during recording.
               </Typography>
@@ -700,37 +701,37 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           </Box>
 
           {/* Device Counts */}
-          <Box sx={{ 
-            mt: 3, 
-            p: 2, 
-            backgroundColor: 'rgba(255, 255, 255, 0.05)', 
-            borderRadius: 1 
+          <Box sx={{
+            mt: 3,
+            p: 2,
+            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            borderRadius: 1
           }}>
             <Typography variant="body2" color="text.secondary">
               Detected Devices: {audioDevices.input.length} input, {audioDevices.output.length} output
             </Typography>
           </Box>
         </DialogContent>
-        
-        <DialogActions sx={{ 
-          backgroundColor: '#1a1a1a', 
+
+        <DialogActions sx={{
+          backgroundColor: '#1a1a1a',
           borderTop: '1px solid #333',
-          gap: 1, 
-          p: 2 
+          gap: 1,
+          p: 2
         }}>
-          <Button 
+          <Button
             onClick={handleUseAutoDetection}
             color="warning"
             variant="outlined"
           >
             Use Auto Detection
           </Button>
-          
+
           <Button onClick={handleDeviceSettingsClose}>
             Cancel
           </Button>
-          
-          <Button 
+
+          <Button
             onClick={handleDeviceSettingsSave}
             variant="contained"
             color="primary"

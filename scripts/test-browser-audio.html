@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Simple Browser Audio Recording Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      button {
+        padding: 15px 25px;
+        margin: 10px;
+        font-size: 16px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      .start {
+        background-color: #28a745;
+        color: white;
+      }
+      .stop {
+        background-color: #dc3545;
+        color: white;
+      }
+      .test {
+        background-color: #007bff;
+        color: white;
+      }
+      .status {
+        margin: 15px 0;
+        padding: 15px;
+        border-radius: 5px;
+        font-weight: bold;
+      }
+      .success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+      .error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+      .info {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
+      }
+      .warning {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+      }
+      .log {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        padding: 15px;
+        max-height: 400px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .log div {
+        margin: 2px 0;
+      }
+      .audio-player {
+        margin: 15px 0;
+      }
+      audio {
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🎙️ Simple Browser Audio Recording Test</h1>
+
+    <div>
+      <button id="testBtn" class="test">🎵 Test Audio Generation</button>
+      <button id="startBtn" class="start">🎙️ Start Recording</button>
+      <button id="stopBtn" class="stop" disabled>🛑 Stop Recording</button>
+      <button id="clearBtn">🗑️ Clear Log</button>
+    </div>
+
+    <div id="status" class="status info">Ready to test audio recording</div>
+
+    <div id="audioPlayer" class="audio-player" style="display: none">
+      <h3>🎵 Recorded Audio:</h3>
+      <audio id="audioElement" controls></audio>
+      <button id="downloadBtn" class="test">💾 Download WAV</button>
+    </div>
+
+    <div id="log" class="log"></div>
+
+    <script>
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let isRecording = false;
+      let recordedBlob = null;
+
+      function log(message, type = "info") {
+        const logDiv = document.getElementById("log");
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = document.createElement("div");
+        logEntry.className = type;
+        logEntry.innerHTML = `[${timestamp}] ${message}`;
+        logDiv.appendChild(logEntry);
+        logDiv.scrollTop = logDiv.scrollHeight;
+        console.log(message);
+      }
+
+      function updateStatus(message, type = "info") {
+        const statusDiv = document.getElementById("status");
+        statusDiv.className = `status ${type}`;
+        statusDiv.textContent = message;
+      }
+
+      function clearLog() {
+        document.getElementById("log").innerHTML = "";
+      }
+
+      async function testAudioGeneration() {
+        try {
+          log("🧪 Testing audio generation...");
+
+          // Create a simple audio context
+          const audioContext = new (window.AudioContext ||
+            window.webkitAudioContext)();
+          const oscillator = audioContext.createOscillator();
+          const gainNode = audioContext.createGain();
+
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+
+          oscillator.frequency.setValueAtTime(440, audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+
+          oscillator.start();
+          log("🎵 Playing 440Hz tone for 2 seconds...");
+          updateStatus("Playing test tone...", "info");
+
+          setTimeout(() => {
+            oscillator.stop();
+            log("✅ Audio generation test completed");
+            updateStatus("Audio generation test completed", "success");
+          }, 2000);
+        } catch (error) {
+          log(`❌ Audio generation test failed: ${error.message}`, "error");
+          updateStatus(`Audio generation failed: ${error.message}`, "error");
+        }
+      }
+
+      async function startRecording() {
+        try {
+          log("🎙️ Starting audio recording...");
+          updateStatus("Requesting microphone access...", "info");
+
+          // Request microphone access
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+
+          log("✅ Microphone access granted");
+          log(
+            `📊 Stream tracks: ${stream
+              .getTracks()
+              .map((t) => t.kind)
+              .join(", ")}`
+          );
+          log(
+            `📊 Track details: ${JSON.stringify(
+              stream.getTracks().map((t) => ({
+                kind: t.kind,
+                enabled: t.enabled,
+                muted: t.muted,
+                readyState: t.readyState,
+              }))
+            )}`
+          );
+
+          // Create MediaRecorder
+          mediaRecorder = new MediaRecorder(stream, {
+            mimeType: "audio/webm;codecs=opus",
+          });
+
+          log(
+            `✅ MediaRecorder created with mimeType: ${mediaRecorder.mimeType}`
+          );
+          log(`✅ MediaRecorder state: ${mediaRecorder.state}`);
+
+          audioChunks = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              audioChunks.push(event.data);
+              log(`📦 Audio chunk received: ${event.data.size} bytes`);
+            } else {
+              log("⚠️ Empty audio chunk received");
+            }
+          };
+
+          mediaRecorder.onstart = () => {
+            log("🎙️ MediaRecorder started");
+            log(`✅ MediaRecorder state after start: ${mediaRecorder.state}`);
+            isRecording = true;
+            document.getElementById("startBtn").disabled = true;
+            document.getElementById("stopBtn").disabled = false;
+            updateStatus("Recording... Speak into your microphone!", "success");
+          };
+
+          mediaRecorder.onstop = async () => {
+            log("🛑 MediaRecorder stopped");
+            log(`📊 Total chunks: ${audioChunks.length}`);
+            log(
+              `📊 Total size: ${audioChunks.reduce(
+                (sum, chunk) => sum + chunk.size,
+                0
+              )} bytes`
+            );
+
+            if (audioChunks.length > 0) {
+              recordedBlob = new Blob(audioChunks, { type: "audio/webm" });
+              log(`✅ Created audio blob: ${recordedBlob.size} bytes`);
+
+              // Create audio URL for playback
+              const audioUrl = URL.createObjectURL(recordedBlob);
+              const audioElement = document.getElementById("audioElement");
+              audioElement.src = audioUrl;
+              document.getElementById("audioPlayer").style.display = "block";
+
+              updateStatus(
+                `Recording completed! ${recordedBlob.size} bytes`,
+                "success"
+              );
+            } else {
+              log("❌ No audio chunks received", "error");
+              updateStatus("No audio data recorded", "error");
+            }
+
+            isRecording = false;
+            document.getElementById("startBtn").disabled = false;
+            document.getElementById("stopBtn").disabled = true;
+
+            // Stop all tracks
+            stream.getTracks().forEach((track) => {
+              track.stop();
+              log(`🛑 Stopped track: ${track.kind}`);
+            });
+          };
+
+          mediaRecorder.onerror = (event) => {
+            log(`❌ MediaRecorder error: ${event.error}`, "error");
+            updateStatus(`Recording error: ${event.error}`, "error");
+          };
+
+          // Start recording with 1-second timeslice
+          mediaRecorder.start(1000);
+          log("🎙️ Started recording with 1-second timeslice");
+        } catch (error) {
+          log(`❌ Failed to start recording: ${error.message}`, "error");
+          updateStatus(`Recording failed: ${error.message}`, "error");
+        }
+      }
+
+      function stopRecording() {
+        if (mediaRecorder && isRecording) {
+          log("🛑 Stopping recording...");
+          mediaRecorder.stop();
+        }
+      }
+
+      function downloadWAV() {
+        if (recordedBlob) {
+          const url = URL.createObjectURL(recordedBlob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `recording_${new Date()
+            .toISOString()
+            .slice(0, 19)
+            .replace(/:/g, "-")}.webm`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          log("💾 Download started");
+        }
+      }
+
+      // Event listeners
+      document
+        .getElementById("startBtn")
+        .addEventListener("click", startRecording);
+      document
+        .getElementById("stopBtn")
+        .addEventListener("click", stopRecording);
+      document
+        .getElementById("testBtn")
+        .addEventListener("click", testAudioGeneration);
+      document.getElementById("clearBtn").addEventListener("click", clearLog);
+      document
+        .getElementById("downloadBtn")
+        .addEventListener("click", downloadWAV);
+
+      log("🚀 Simple browser audio recording test ready");
+      log("📋 Browser: " + navigator.userAgent);
+      log(
+        "📋 MediaDevices available: " +
+          !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+      );
+      log("📋 MediaRecorder available: " + !!window.MediaRecorder);
+      updateStatus("Ready to test audio recording", "info");
+    </script>
+  </body>
+</html>
