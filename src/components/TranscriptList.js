@@ -84,7 +84,12 @@ function TranscriptList({
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ 
+      height: '100%', 
+      display: 'flex', 
+      flexDirection: 'column',
+      minHeight: 0, // Important: allows flex child to shrink below content size
+    }}>
       {/* Header */}
       <Box sx={{ 
         p: 2, 
@@ -93,6 +98,7 @@ function TranscriptList({
         justifyContent: 'space-between',
         alignItems: 'center',
         backgroundColor: '#1a1a1a',
+        flexShrink: 0, // Prevent header from shrinking
       }}>
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
           Transcripts ({transcripts.length})
@@ -106,7 +112,27 @@ function TranscriptList({
       </Box>
 
       {/* Transcript List */}
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+      <Box 
+        className="transcripts-list-container"
+        sx={{ 
+          flex: 1, 
+          overflow: 'auto',
+          minHeight: 0, // Important: allows flex child to shrink below content size
+          '&::-webkit-scrollbar': {
+            width: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            backgroundColor: '#2a2a2a',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            backgroundColor: '#555',
+            borderRadius: '4px',
+            '&:hover': {
+              backgroundColor: '#777',
+            },
+          },
+        }}
+      >
         {transcripts.length === 0 ? (
           <Box sx={{ 
             display: 'flex', 
@@ -126,7 +152,11 @@ function TranscriptList({
             </Typography>
           </Box>
         ) : (
-          <List sx={{ p: 0 }}>
+          <List sx={{ 
+            p: 0,
+            height: '100%',
+            overflow: 'auto',
+          }}>
             {transcripts.map((transcript) => (
               <ListItem
                 key={transcript.id}

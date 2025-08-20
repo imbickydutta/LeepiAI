@@ -26,9 +26,22 @@ class WindowsAudioCapture {
     }
     
     this.segmentDuration = 60; // 1 minute segments
+    
+    // Try to load from config file, otherwise use defaults
+    let configSampleRate = 6000;
+    let configChannels = 1;
+    
+    try {
+      const audioConfig = require('../config');
+      configSampleRate = audioConfig.sampleRate;
+      configChannels = audioConfig.channels;
+    } catch (error) {
+      console.warn('⚠️ Could not load audio config, using defaults:', error.message);
+    }
+    
     this.config = {
-      sampleRate: 16000,
-      channels: 1,
+      sampleRate: configSampleRate,
+      channels: configChannels,
       compress: false,
       threshold: 0.5,
       silence: '2.0'
@@ -36,9 +49,6 @@ class WindowsAudioCapture {
     
     // Ensure temp directory exists
     fs.ensureDirSync(this.tempDir);
-    
-    console.log('🎙️ WindowsAudioCapture initialized with native WebRTC APIs');
-    console.log('🔧 Temp directory:', this.tempDir);
   }
 
   /**
@@ -82,6 +92,53 @@ class WindowsAudioCapture {
     } catch (error) {
       console.error('❌ Error checking WebRTC availability:', error);
       return { available: false, error: error.message };
+    }
+  }
+
+  /**
+   * Start single recording (for compatibility with AudioCaptureManager)
+   */
+  async startRecording(outputFile) {
+    try {
+      if (this.isRecording) {
+        throw new Error('Recording already in progress');
+      }
+
+      if (!this.mainWindow) {
+        throw new Error('Main window not set - cannot start WebRTC recording');
+      }
+
+      console.log('🎙️ Starting Windows native single recording...');
+      console.log('🔧 Main window available:', !!this.mainWindow);
+      console.log('🔧 WebContents available:', !!this.mainWindow.webContents);
+
+      // Check WebRTC availability first
+      const webRTCCheck = await this.checkWebRTCAvailability();
+      if (!webRTCCheck.available) {
+        console.error('❌ WebRTC not available:', webRTCCheck);
+        throw new Error(`WebRTC not available: ${webRTCCheck.error || 'Unknown error'}`);
+      }
+
+      this.sessionId = uuidv4();
+      this.segmentIndex = 0;
+      this.segments = [];
+
+      // Start the first segment
+      await this._startNewSegment();
+
+      this.isRecording = true;
+
+      console.log('✅ Windows native single recording started successfully');
+      return {
+        success: true,
+        sessionId: this.sessionId,
+        segments: this.segments
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to start Windows native recording:', error);
+      console.error('❌ Error stack:', error.stack);
+      throw error;
     }
   }
 
@@ -396,6 +453,8 @@ class WindowsAudioCapture {
             // Get system audio stream using the provided source ID
             const stream = await navigator.mediaDevices.getUserMedia({
               audio: {
+                sampleRate: ${this.config.sampleRate},
+                channelCount: ${this.config.channels},
                 mandatory: {
                   chromeMediaSource: 'desktop',
                   chromeMediaSourceId: '${source.id}'

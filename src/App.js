@@ -225,7 +225,6 @@ function App() {
       setLoading(true);
       
       // Check backend status first
-      console.log('🔍 Checking backend status...');
       const status = await apiService.checkBackendStatus();
       setBackendStatus({ ...status, checking: false });
       
@@ -235,7 +234,6 @@ function App() {
         return;
       }
 
-      console.log('✅ Backend is available, checking authentication...');
       
       // Check if user is logged in
       const currentUser = await apiService.getCurrentUser();

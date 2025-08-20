@@ -12,6 +12,8 @@ import {
   Tooltip,
   Collapse,
   Button,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   Logout,
@@ -21,13 +23,20 @@ import {
   ExpandMore,
   DragHandle,
   AdminPanelSettings,
+  AudioFile,
+  Description,
+  Storage,
 } from '@mui/icons-material';
 import RecordingPanel from './RecordingPanel';
 import TranscriptList from './TranscriptList';
 import TranscriptViewer from './TranscriptViewer';
 import AIChat from './AIChat';
+import RecordingsManager from './RecordingsManager';
+import OfflineRecordingsManager from './OfflineRecordingsManager';
 import apiService from '../services/ApiService';
 import AdminPanel from './AdminPanel';
+import OfflineStorageService from '../services/OfflineStorageService';
+
 
 function MainInterface({ user, onLogout, onError, onSuccess }) {
   const [transcripts, setTranscripts] = useState([]);
@@ -40,6 +49,11 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
   const minChatHeight = 100;
   const maxChatHeight = window.innerHeight * 0.8; // 80% of window height
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  
+  // New state for better error handling and recordings management
+  const [activeTab, setActiveTab] = useState(0); // 0: Transcripts, 1: Recordings, 2: Offline Storage
+  const [uploadHistory, setUploadHistory] = useState([]);
+  const [failedUploads, setFailedUploads] = useState([]);
 
   // Load user's transcripts on component mount
   useEffect(() => {
@@ -65,7 +79,8 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
 
   const handleRecordingComplete = async (dualAudioData) => {
     try {
-      console.log('📤 handleRecordingComplete received:', {
+      // TEMP_DEBUG_FRONTEND_005: Log recording completion
+      console.log('📤 TEMP_DEBUG_FRONTEND_005 - handleRecordingComplete received:', {
         success: dualAudioData.success,
         sessionId: dualAudioData.sessionId,
         totalSegments: dualAudioData.totalSegments,
@@ -74,24 +89,95 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
         hasOutputAudio: dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0
       });
       
+      // Generate session ID if not provided
+      const sessionId = dualAudioData.sessionId || `session_${Date.now()}_${user.id}`;
+      
+      // Add to upload history
+      const uploadId = Date.now().toString();
+      const uploadRecord = {
+        id: uploadId,
+        status: 'uploading',
+        startTime: new Date(),
+        dualAudioData: { ...dualAudioData, sessionId },
+        progress: 0
+      };
+      
+      setUploadHistory(prev => [...prev, uploadRecord]);
       onSuccess('Uploading and processing recording...');
       
       // Check if we have dual audio or single audio
-      if (dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0) {
+      if (dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0 && 
+          dualAudioData.inputFiles && dualAudioData.inputFiles.length > 0) {
         onSuccess('Processing dual audio: Microphone + System Audio...');
         
-        // Upload dual audio files
-        const result = await apiService.uploadSegmentedDualAudio(
-          dualAudioData.inputFiles, 
-          dualAudioData.outputFiles,
-          (progress) => {
-            onSuccess(`Uploading... ${progress}%`);
+        // Upload audio files directly without conversion
+        onSuccess('Uploading audio files...');
+        
+        // Upload dual audio files directly
+        let result;
+        try {
+          result = await apiService.uploadSegmentedDualAudio(
+            dualAudioData.inputFiles, 
+            dualAudioData.outputFiles,
+            (progress) => {
+              // Update progress
+              setUploadHistory(prev => 
+                prev.map(upload => 
+                  upload.id === uploadId 
+                    ? { ...upload, progress }
+                    : upload
+                )
+              );
+              onSuccess(`Uploading... ${progress}%`);
+            }
+          );
+        } catch (uploadError) {
+          console.error('❌ Network error during upload:', uploadError);
+          
+          // Store recording offline for later retry
+          try {
+            const offlineId = await OfflineStorageService.storeRecording({
+              ...dualAudioData,
+              sessionId,
+              uploadId,
+              error: uploadError.message
+            });
+            
+            onError(`Network error: Recording saved offline (ID: ${offlineId}). You can retry upload later.`);
+          } catch (offlineError) {
+            console.error('❌ Failed to store recording offline:', offlineError);
+            onError(`Network error and offline storage failed: ${uploadError.message}`);
           }
-        );
+          
+          // Update upload record as failed
+          setUploadHistory(prev => 
+            prev.map(upload => 
+              upload.id === uploadId 
+                ? { 
+                    ...upload, 
+                    status: 'failed', 
+                    endTime: new Date(), 
+                    error: `Network error: ${uploadError.message}`
+                  }
+                : upload
+            )
+          );
+          
+          return;
+        }
         
         console.log('🔍 Dual audio upload result:', result);
         
         if (result.success) {
+          // Update upload record as successful
+          setUploadHistory(prev => 
+            prev.map(upload => 
+              upload.id === uploadId 
+                ? { ...upload, status: 'completed', endTime: new Date(), result }
+                : upload
+            )
+          );
+          
           onSuccess('Dual audio transcript generated successfully!');
           
           // Refresh transcript list
@@ -102,20 +188,65 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
             setSelectedTranscript(result.transcript);
           }
         } else {
-          const errorMessage = result.error || 'Failed to process dual audio';
-          console.error('❌ Dual audio processing failed:', result.error);
-          onError(`Transcription failed: ${errorMessage}`);
+          // Update upload record as failed
+          setUploadHistory(prev => 
+            prev.map(upload => 
+              upload.id === uploadId 
+                ? { 
+                    ...upload, 
+                    status: 'failed', 
+                    endTime: new Date(), 
+                    error: result.error,
+                    result 
+                  }
+                : upload
+            )
+          );
+          
+          // Store recording offline for later retry
+          try {
+            const offlineId = await OfflineStorageService.storeRecording({
+              ...dualAudioData,
+              sessionId,
+              uploadId,
+              error: result.error
+            });
+            
+            onError(`Upload failed: Recording saved offline (ID: ${offlineId}). You can retry upload later.`);
+          } catch (offlineError) {
+            console.error('❌ Failed to store recording offline:', offlineError);
+            onError(`Upload failed and offline storage failed: ${result.error}`);
+          }
+          
+          // Add to failed uploads for retry
+          setFailedUploads(prev => [...prev, {
+            id: uploadId,
+            dualAudioData: { ...dualAudioData, sessionId },
+            error: result.error,
+            timestamp: new Date()
+          }]);
         }
       } else {
         onSuccess('Processing microphone audio only...');
         
+        // Upload microphone audio files directly without conversion
+        onSuccess('Uploading microphone audio files...');
+        
         // Check if this is segmented recording
-        if (dualAudioData.totalSegments > 1 && Array.isArray(dualAudioData.inputFiles)) {
+        if (dualAudioData.totalSegments > 1 && Array.isArray(dualAudioData.inputFiles) && dualAudioData.inputFiles.length > 0) {
           // Handle segmented microphone-only recording
           const result = await apiService.uploadSegmentedDualAudio(
             dualAudioData.inputFiles, 
             [], // Empty array for system files
             (progress) => {
+              // Update progress
+              setUploadHistory(prev => 
+                prev.map(upload => 
+                  upload.id === uploadId 
+                    ? { ...upload, progress }
+                    : upload
+                )
+              );
               onSuccess(`Uploading... ${progress}%`);
             }
           );
@@ -123,6 +254,15 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
           console.log('🔍 Segmented microphone upload result:', result);
           
           if (result.success) {
+            // Update upload record as successful
+            setUploadHistory(prev => 
+              prev.map(upload => 
+                upload.id === uploadId 
+                  ? { ...upload, status: 'completed', endTime: new Date(), result }
+                  : upload
+                )
+            );
+            
             onSuccess('Transcript generated successfully!');
             
             // Refresh transcript list
@@ -133,19 +273,66 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               setSelectedTranscript(result.transcript);
             }
           } else {
+            // Update upload record as failed
+            setUploadHistory(prev => 
+              prev.map(upload => 
+                upload.id === uploadId 
+                  ? { 
+                      ...upload, 
+                      status: 'failed', 
+                      endTime: new Date(), 
+                      error: result.error,
+                      result 
+                    }
+                  : upload
+                )
+            );
+            
+            // Add to failed uploads for retry
+            setFailedUploads(prev => [...prev, {
+              id: uploadId,
+              dualAudioData: { ...dualAudioData, sessionId },
+              error: result.error,
+              timestamp: new Date()
+            }]);
+            
             const errorMessage = result.error || 'Failed to process recording';
             console.error('❌ Audio processing failed:', result.error);
             onError(`Transcription failed: ${errorMessage}`);
           }
         } else {
+          // Check if we have input files
+          if (!dualAudioData.inputFiles || dualAudioData.inputFiles.length === 0) {
+            console.error('❌ No input files available for upload');
+            onError('No audio files were generated during recording. Please try again.');
+            return;
+          }
+
           // Upload single audio file (microphone only)
           const result = await apiService.uploadAudio(dualAudioData.inputFiles[0], (progress) => {
+            // Update progress
+            setUploadHistory(prev => 
+              prev.map(upload => 
+                upload.id === uploadId 
+                  ? { ...upload, progress }
+                  : upload
+              )
+            );
             onSuccess(`Uploading... ${progress}%`);
           });
           
           console.log('🔍 Audio upload result:', result);
           
           if (result.success) {
+            // Update upload record as successful
+            setUploadHistory(prev => 
+              prev.map(upload => 
+                upload.id === uploadId 
+                  ? { ...upload, status: 'completed', endTime: new Date(), result }
+                  : upload
+                )
+            );
+            
             onSuccess('Transcript generated successfully!');
             
             // Refresh transcript list
@@ -156,6 +343,29 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               setSelectedTranscript(result.transcript);
             }
           } else {
+            // Update upload record as failed
+            setUploadHistory(prev => 
+              prev.map(upload => 
+                upload.id === uploadId 
+                  ? { 
+                      ...upload, 
+                      status: 'failed', 
+                      endTime: new Date(), 
+                      error: result.error,
+                      result 
+                    }
+                  : upload
+                )
+            );
+            
+            // Add to failed uploads for retry
+            setFailedUploads(prev => [...prev, {
+              id: uploadId,
+              dualAudioData: { ...dualAudioData, sessionId },
+              error: result.error,
+              timestamp: new Date()
+            }]);
+            
             const errorMessage = result.error || 'Failed to process recording';
             console.error('❌ Audio processing failed:', result.error);
             onError(`Transcription failed: ${errorMessage}`);
@@ -164,7 +374,43 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
       }
     } catch (error) {
       console.error('❌ Unexpected error in handleRecordingComplete:', error);
+      
+      // Update upload record as failed
+      setUploadHistory(prev => 
+        prev.map(upload => 
+          upload.id === uploadId 
+            ? { 
+                ...upload, 
+                status: 'failed', 
+                endTime: new Date(), 
+                error: error.message
+              }
+            : upload
+          )
+        );
+      
+      // Add to failed uploads for retry
+      setFailedUploads(prev => [...prev, {
+        id: uploadId,
+        dualAudioData: { ...dualAudioData, sessionId: dualAudioData.sessionId || `session_${Date.now()}_${user.id}` },
+        error: error.message,
+        timestamp: new Date()
+      }]);
+      
       onError(`Processing failed: ${error.message}`);
+    }
+  };
+
+  // Retry a failed upload
+  const handleRetryUpload = async (failedUpload) => {
+    try {
+      // Remove from failed uploads
+      setFailedUploads(prev => prev.filter(upload => upload.id !== failedUpload.id));
+      
+      // Retry the upload
+      await handleRecordingComplete(failedUpload.dualAudioData);
+    } catch (error) {
+      onError(`Retry failed: ${error.message}`);
     }
   };
 
@@ -271,8 +517,19 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
     setIsAIChatExpanded(!isAIChatExpanded);
   };
 
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
+  };
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <Box sx={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: '100vh',
+      minHeight: '100vh',
+      maxHeight: '100vh',
+      overflow: 'hidden',
+    }}>
       {/* Header */}
       <AppBar 
         position="static" 
@@ -381,14 +638,24 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
       )}
 
       {/* Main Content */}
-      <Box sx={{ flex: 1, overflow: 'hidden' }}>
-        <Grid container sx={{ height: '100%' }}>
-          {/* Left Panel - Recording and Transcript List */}
+      <Box sx={{ 
+        flex: 1, 
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0, // Critical for flexbox scrolling
+      }}>
+        <Grid container sx={{ 
+          height: '100%',
+          minHeight: 0, // Critical for flexbox scrolling
+        }}>
+          {/* Left Panel - Recording and Content Management */}
           <Grid item xs={12} md={4} sx={{ 
             borderRight: '1px solid #333',
             display: 'flex',
             flexDirection: 'column',
             height: '100%',
+            minHeight: 0, // Critical for flexbox scrolling
           }}>
             {/* Recording Panel */}
             <Box sx={{ 
@@ -403,16 +670,83 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
               />
             </Box>
             
-            {/* Transcript List */}
-            <Box sx={{ flex: 1, overflow: 'hidden' }}>
-              <TranscriptList
-                transcripts={transcripts}
-                selectedTranscript={selectedTranscript}
-                onTranscriptSelect={handleTranscriptSelect}
-                onTranscriptDelete={handleTranscriptDelete}
-                loading={loading}
-                onRefresh={loadTranscripts}
-              />
+            {/* Content Management Tabs */}
+            <Box sx={{ 
+              flex: 1, 
+              overflow: 'hidden',
+              minHeight: 0, // Critical for flexbox scrolling
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              <Box sx={{ 
+                borderBottom: 1, 
+                borderColor: '#333',
+                flexShrink: 0, // Prevent tabs from shrinking
+              }}>
+                <Tabs 
+                  value={activeTab} 
+                  onChange={handleTabChange}
+                  sx={{
+                    '& .MuiTab-root': {
+                      color: 'text.secondary',
+                      '&.Mui-selected': {
+                        color: 'primary.main',
+                      },
+                    },
+                    '& .MuiTabs-indicator': {
+                      backgroundColor: 'primary.main',
+                    },
+                  }}
+                >
+                  <Tab 
+                    icon={<Description />} 
+                    label="Transcripts" 
+                    iconPosition="start"
+                  />
+                  <Tab 
+                    icon={<AudioFile />} 
+                    label="Recordings" 
+                    iconPosition="start"
+                  />
+                  <Tab 
+                    icon={<Storage />} 
+                    label="Offline Storage" 
+                    iconPosition="start"
+                  />
+                </Tabs>
+              </Box>
+              
+              {/* Tab Content */}
+              <Box sx={{ 
+                flex: 1, 
+                overflow: 'hidden',
+                minHeight: 0, // Important: allows flex child to shrink below content size
+                display: 'flex',
+                flexDirection: 'column',
+              }}>
+                {activeTab === 0 ? (
+                  <TranscriptList
+                    transcripts={transcripts}
+                    selectedTranscript={selectedTranscript}
+                    onTranscriptSelect={handleTranscriptSelect}
+                    onTranscriptDelete={handleTranscriptDelete}
+                    loading={loading}
+                    onRefresh={loadTranscripts}
+                  />
+                ) : activeTab === 1 ? (
+                  <RecordingsManager
+                    onError={onError}
+                    onSuccess={onSuccess}
+                    onRefresh={loadTranscripts}
+                  />
+                ) : (
+                  <OfflineRecordingsManager
+                    onError={onError}
+                    onSuccess={onSuccess}
+                    onRefreshTranscripts={loadTranscripts}
+                  />
+                )}
+              </Box>
             </Box>
           </Grid>
 
@@ -557,6 +891,8 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
                   <li>Generate summaries and interview debriefs</li>
                   <li>Chat with AI about your transcripts</li>
                   <li>Export transcripts in multiple formats</li>
+                  <li>Manage recordings independently from transcripts</li>
+                  <li>Retry failed uploads and manage audio files</li>
                 </Box>
               </Box>
             )}

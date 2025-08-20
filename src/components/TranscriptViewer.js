@@ -217,13 +217,7 @@ function TranscriptViewer({ transcript, onError, onSuccess, onTranscriptUpdate }
   };
 
   const handleGenerateDebrief = async () => {
-    console.log('🎯 DEBUG: handleGenerateDebrief called', {
-      hasDebrief: !!transcript.debrief,
-      transcriptId: transcript.id,
-      isGenerating: isGeneratingDebrief,
-      debriefType: typeof transcript.debrief,
-      debriefFormat: transcript.debrief?.format
-    });
+
     
     // Check if we should regenerate (no debrief, or empty legacy debrief)
     const shouldRegenerate = !transcript.debrief || 
@@ -232,27 +226,17 @@ function TranscriptViewer({ transcript, onError, onSuccess, onTranscriptUpdate }
         (!transcript.debrief.strengths || transcript.debrief.strengths.length === 0) &&
         (!transcript.debrief.improvements || transcript.debrief.improvements.length === 0));
     
-    console.log('🔄 DEBUG: Should regenerate debrief?', {
-      shouldRegenerate,
-      hasDebrief: !!transcript.debrief,
-      hasFormat: !!transcript.debrief?.format,
-      hasFeedback: !!(transcript.debrief?.feedback && transcript.debrief.feedback.trim()),
-      strengthsCount: transcript.debrief?.strengths?.length || 0,
-      improvementsCount: transcript.debrief?.improvements?.length || 0
-    });
+
     
     if (shouldRegenerate) {
       try {
         setIsGeneratingDebrief(true);
-        console.log('🔄 DEBUG: Starting debrief generation for transcript:', transcript.id);
         
         const result = await apiService.generateDebrief(transcript.id);
-        console.log('📊 DEBUG: Debrief generation result:', result);
         
         if (result.success) {
           // Update transcript with debrief
           const updatedTranscript = { ...transcript, debrief: result.debrief };
-          console.log('✅ DEBUG: Debrief saved to transcript:', result.debrief);
           if (onTranscriptUpdate) {
             onTranscriptUpdate(updatedTranscript);
           }
@@ -268,20 +252,12 @@ function TranscriptViewer({ transcript, onError, onSuccess, onTranscriptUpdate }
         setIsGeneratingDebrief(false);
       }
     } else {
-      console.log('📄 DEBUG: Debrief already exists, opening dialog');
       setDebriefDialog(true);
     }
   };
 
   const renderTranscriptContent = () => {
-    console.log('🔍 DEBUG: TranscriptViewer transcript object:', {
-      hasContent: !!transcript.content,
-      contentType: typeof transcript.content,
-      contentPreview: typeof transcript.content === 'string' ? transcript.content.substring(0, 100) : transcript.content,
-      hasSegments: !!transcript.segments,
-      segmentsLength: transcript.segments?.length,
-      segmentPreview: transcript.segments?.slice(0, 2)
-    });
+
     
     if (!transcript.content) {
       return (
@@ -304,7 +280,6 @@ function TranscriptViewer({ transcript, onError, onSuccess, onTranscriptUpdate }
       segments = transcript.segments;
     }
     
-    console.log('🔍 DEBUG: TranscriptViewer segments:', segments.slice(0, 3));
 
     return (
       <Box sx={{ 
@@ -504,13 +479,7 @@ function TranscriptViewer({ transcript, onError, onSuccess, onTranscriptUpdate }
   };
 
   const renderDebrief = () => {
-    console.log('🔍 DEBUG: renderDebrief called', {
-      isGeneratingDebrief,
-      hasDebrief: !!transcript.debrief,
-      debriefType: typeof transcript.debrief,
-      debriefFormat: transcript.debrief?.format,
-      debriefPreview: transcript.debrief ? JSON.stringify(transcript.debrief).substring(0, 100) : 'none'
-    });
+
     
     if (isGeneratingDebrief) {
       return (

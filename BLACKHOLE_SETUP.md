@@ -68,8 +68,9 @@ After installation, restart your computer to activate the BlackHole driver.
 - **Solution**: Use the Multi-Output Device setup (Step 3) to route audio to both your speakers and BlackHole
 
 ### Audio Quality Issues
-- Keep BlackHole sample rate at 48kHz (default)
+- Keep BlackHole sample rate at 48kHz (default) - LeepiAI will downsample to 6kHz
 - Ensure all devices in Audio MIDI Setup use the same sample rate
+- Note: LeepiAI now uses 6kHz for efficiency (reduced from 16kHz)
 
 ## 🎯 Quick Setup for Interviews
 

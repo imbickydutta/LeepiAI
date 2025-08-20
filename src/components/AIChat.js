@@ -16,13 +16,17 @@ import {
   Person,
   Clear,
   AutoAwesome,
+  Refresh,
 } from '@mui/icons-material';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import apiService from '../services/ApiService';
 
 function AIChat({ transcript, onError, onSuccess }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showRawMarkdown, setShowRawMarkdown] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -35,8 +39,48 @@ function AIChat({ transcript, onError, onSuccess }) {
   }, [messages]);
 
   useEffect(() => {
-    // Add welcome message when transcript changes
+    // Load existing chat history and add welcome message when transcript changes
     if (transcript) {
+      loadChatHistory();
+    }
+  }, [transcript?.id]);
+
+  const loadChatHistory = async () => {
+    try {
+      const result = await apiService.getChatHistory(transcript.id);
+      
+      if (result.success && result.chatHistory && result.chatHistory.length > 0) {
+        // Convert backend format to frontend format
+        const historyMessages = result.chatHistory.map((msg, index) => ({
+          id: `history_${index}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp || new Date().toISOString()
+        }));
+        
+        // Add welcome message at the beginning
+        const messagesWithWelcome = [
+          {
+            id: 'welcome',
+            role: 'assistant',
+            content: `Hi! I'm ready to help you analyze this interview transcript. You can ask me questions about the content, request insights, or get recommendations for improvement. What would you like to know?`,
+            timestamp: new Date().toISOString()
+          },
+          ...historyMessages
+        ];
+        
+        setMessages(messagesWithWelcome);
+      } else {
+        setMessages([{
+          id: 'welcome',
+          role: 'assistant',
+          content: `Hi! I'm ready to help you analyze this interview transcript. You can ask me questions about the content, request insights, or get recommendations for improvement. What would you like to know?`,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    } catch (error) {
+      console.error('❌ Failed to load chat history:', error);
+      // Fallback to welcome message only
       setMessages([{
         id: 'welcome',
         role: 'assistant',
@@ -44,7 +88,7 @@ function AIChat({ transcript, onError, onSuccess }) {
         timestamp: new Date().toISOString()
       }]);
     }
-  }, [transcript?.id]);
+  };
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -61,7 +105,7 @@ function AIChat({ transcript, onError, onSuccess }) {
     setIsLoading(true);
 
     try {
-      const result = await apiService.chatWithTranscript(transcript.id, userMessage.content, messages);
+      const result = await apiService.chatWithTranscript(transcript.id, userMessage.content, true);
 
       if (result.success) {
         const assistantMessage = {
@@ -96,6 +140,10 @@ function AIChat({ transcript, onError, onSuccess }) {
       content: `Chat cleared! I'm still here to help you analyze this interview transcript. What would you like to discuss?`,
       timestamp: new Date().toISOString()
     }]);
+  };
+
+  const handleRefreshChat = () => {
+    loadChatHistory();
   };
 
   const handleQuickQuestion = (question) => {
@@ -154,16 +202,145 @@ function AIChat({ transcript, onError, onSuccess }) {
             border: '1px solid #333',
           }}
         >
-          <Typography
-            variant="body2"
-            sx={{
-              lineHeight: 1.5,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }}
-          >
-            {message.content}
-          </Typography>
+          {isUser ? (
+            <Typography
+              variant="body2"
+              sx={{
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {message.content}
+            </Typography>
+          ) : showRawMarkdown ? (
+            <Typography
+              variant="body2"
+              component="pre"
+              sx={{
+                lineHeight: 1.5,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'monospace',
+                fontSize: '0.8rem',
+                backgroundColor: 'rgba(0, 0, 0, 0.2)',
+                p: 1,
+                borderRadius: 1,
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+              }}
+            >
+              {message.content}
+            </Typography>
+          ) : (
+            <Box
+              sx={{
+                lineHeight: 1.5,
+                wordBreak: 'break-word',
+                '& h1, & h2, & h3, & h4, & h5, & h6': {
+                  color: 'text.primary',
+                  fontWeight: 600,
+                  mb: 1,
+                  mt: 2,
+                },
+                '& h1': { fontSize: '1.5rem' },
+                '& h2': { fontSize: '1.3rem' },
+                '& h3': { fontSize: '1.1rem' },
+                '& p': { mb: 1 },
+                '& ul, & ol': { 
+                  mb: 1, 
+                  pl: 2,
+                  '& li': { mb: 0.5 }
+                },
+                '& code': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  padding: '2px 4px',
+                  borderRadius: '3px',
+                  fontFamily: 'monospace',
+                  fontSize: '0.9em',
+                },
+                '& pre': {
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  overflow: 'auto',
+                  '& code': {
+                    backgroundColor: 'transparent',
+                    padding: 0,
+                  }
+                },
+                '& blockquote': {
+                  borderLeft: '4px solid',
+                  borderColor: 'primary.main',
+                  pl: 2,
+                  ml: 0,
+                  fontStyle: 'italic',
+                  color: 'text.secondary',
+                },
+                '& table': {
+                  borderCollapse: 'collapse',
+                  width: '100%',
+                  mb: 1,
+                  '& th, & td': {
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    padding: '8px',
+                    textAlign: 'left',
+                  },
+                  '& th': {
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    fontWeight: 600,
+                  }
+                },
+                '& a': {
+                  color: 'primary.main',
+                  textDecoration: 'none',
+                  '&:hover': {
+                    textDecoration: 'underline',
+                  }
+                },
+                '& input[type="checkbox"]': {
+                  marginRight: '8px',
+                },
+                '& .task-list-item': {
+                  listStyle: 'none',
+                  '& input[type="checkbox"]': {
+                    marginRight: '8px',
+                  }
+                },
+                '& .task-list-item-checkbox': {
+                  marginRight: '8px',
+                }
+              }}
+            >
+              <ReactMarkdown 
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  // Custom component overrides for better styling
+                  h1: ({children}) => <Typography variant="h5" component="h1">{children}</Typography>,
+                  h2: ({children}) => <Typography variant="h6" component="h2">{children}</Typography>,
+                  h3: ({children}) => <Typography variant="subtitle1" component="h3">{children}</Typography>,
+                  p: ({children}) => <Typography variant="body2" component="p">{children}</Typography>,
+                  li: ({children}) => <Typography variant="body2" component="li">{children}</Typography>,
+                  code: ({node, inline, className, children, ...props}) => {
+                    const match = /language-(\w+)/.exec(className || '');
+                    return !inline ? (
+                      <pre {...props}>
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      </pre>
+                    ) : (
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    );
+                  }
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            </Box>
+          )}
           
           <Typography
             variant="caption"
@@ -221,9 +398,34 @@ function AIChat({ transcript, onError, onSuccess }) {
             label="Powered by Gemini" 
             size="small" 
             variant="outlined"
+            sx={{ fontSize: '0.7rem', mr: 1 }}
+          />
+          <Chip 
+            label="Markdown" 
+            size="small" 
+            variant="outlined"
+            color="secondary"
             sx={{ fontSize: '0.7rem' }}
           />
         </Box>
+        
+        <Button
+          size="small"
+          onClick={() => setShowRawMarkdown(!showRawMarkdown)}
+          variant={showRawMarkdown ? "contained" : "outlined"}
+          sx={{ color: 'text.secondary', mr: 1 }}
+        >
+          {showRawMarkdown ? 'Hide' : 'Show'} Raw
+        </Button>
+        
+        <Button
+          size="small"
+          onClick={handleRefreshChat}
+          startIcon={<Refresh />}
+          sx={{ color: 'text.secondary', mr: 1 }}
+        >
+          Refresh
+        </Button>
         
         <Button
           size="small"

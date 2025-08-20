@@ -85,7 +85,6 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           input: devices.filter(d => d.kind === 'audioinput'),
           output: devices.filter(d => d.kind === 'audiooutput')
         });
-        console.log('🎧 Loaded audio devices:', devices);
       }
     } catch (error) {
       console.warn('Failed to load audio devices:', error);
@@ -122,15 +121,23 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
     try {
       setIsRecording(true);
       setRecordingTime(0);
-
-      console.log('🎙️ Starting native dual recording...');
+      
+      // TEMP_DEBUG_FRONTEND_001: Log recording start
+      console.log('🎙️ TEMP_DEBUG_FRONTEND_001 - Starting recording...');
+      console.log('🔧 TEMP_DEBUG_FRONTEND_001 - IPC available:', !!window.electronAPI);
+      console.log('🔧 TEMP_DEBUG_FRONTEND_001 - Audio API available:', !!window.electronAPI?.audio);
+      console.log('🔧 TEMP_DEBUG_FRONTEND_001 - startDualRecording available:', !!window.electronAPI?.audio?.startDualRecording);
       
       const result = await window.electronAPI.audio.startDualRecording();
+      
+      // TEMP_DEBUG_FRONTEND_002: Log recording result
+      console.log('✅ TEMP_DEBUG_FRONTEND_002 - Recording started:', result);
+      console.log('🔧 TEMP_DEBUG_FRONTEND_002 - Result type:', typeof result);
+      console.log('🔧 TEMP_DEBUG_FRONTEND_002 - Result keys:', Object.keys(result || {}));
       
       if (result.success) {
         recordingSessionRef.current = result.sessionId;
         onSuccess('✅ Dual recording started: Microphone + System Audio (Native)');
-        console.log('🎙️ Recording started with session:', result.sessionId);
       } else {
         setIsRecording(false);
         onError(result.error || 'Failed to start recording');
@@ -138,7 +145,7 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
       
     } catch (error) {
       setIsRecording(false);
-      console.error('Failed to start recording:', error);
+      console.error('❌ TEMP_DEBUG_FRONTEND_001 - Failed to start recording:', error);
       onError(`Failed to start recording: ${error.message}`);
     }
   };
@@ -149,30 +156,27 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
       setIsProcessing(true);
       setProcessingStatus('Stopping recording...');
 
-      console.log('🛑 Stopping segmented dual recording...');
 
       const result = await window.electronAPI.audio.stopDualRecording();
       
-      console.log('📥 Renderer: Received result from IPC:', result);
       
       if (result.success) {
-        console.log('📥 Renderer: dualAudioData structure:', {
-          success: result.dualAudioData?.success,
-          sessionId: result.dualAudioData?.sessionId,
-          totalSegments: result.dualAudioData?.totalSegments,
-          totalInputSize: result.dualAudioData?.totalInputSize,
-          totalOutputSize: result.dualAudioData?.totalOutputSize,
-          segmentsLength: result.dualAudioData?.segments?.length,
-          inputFilesLength: result.dualAudioData?.inputFiles?.length,
-          outputFilesLength: result.dualAudioData?.outputFiles?.length
-        });
+        // Check if dualAudioData exists
+        if (!result.dualAudioData) {
+          console.error('❌ Recording stopped but no dualAudioData returned');
+          onError('Recording completed but no audio data was generated. Please check your audio devices and try again.');
+          return;
+        }
         
         setProcessingStatus(`Processing ${result.dualAudioData?.totalSegments || 0} audio segments...`);
         
-        console.log('✅ Segmented recording stopped:', {
+        // TEMP_DEBUG_FRONTEND_003: Log recording results
+        console.log('✅ TEMP_DEBUG_FRONTEND_003 - Segmented recording stopped:', {
           segments: result.dualAudioData?.totalSegments,
           totalInputSize: result.dualAudioData?.totalInputSize,
-          totalOutputSize: result.dualAudioData?.totalOutputSize
+          totalOutputSize: result.dualAudioData?.totalOutputSize,
+          inputSizeMB: result.dualAudioData?.totalInputSize ? (result.dualAudioData.totalInputSize / 1024 / 1024).toFixed(2) + ' MB' : 'N/A',
+          outputSizeMB: result.dualAudioData?.totalOutputSize ? (result.dualAudioData.totalOutputSize / 1024 / 1024).toFixed(2) + ' MB' : 'N/A'
         });
 
         // Convert all segment file paths to File objects for backend upload
@@ -183,11 +187,6 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
         const inputFilePaths = result.dualAudioData?.inputFiles || [];
         const outputFilePaths = result.dualAudioData?.outputFiles || [];
 
-        console.log('📁 Processing files:', {
-          segmentsLength: segments.length,
-          inputFilePathsLength: inputFilePaths.length,
-          outputFilePathsLength: outputFilePaths.length
-        });
 
         // Use segments array if available, otherwise fall back to file paths
         if (segments.length > 0) {
@@ -242,6 +241,33 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           isSegmented: dualAudioData.isSegmented,
           totalSegments: dualAudioData.totalSegments
         });
+        
+        // TEMP_DEBUG_FRONTEND_004: Show file details
+        console.log('📁 TEMP_DEBUG_FRONTEND_004 - Input files details:');
+        inputFiles.forEach((file, index) => {
+          console.log(`  Input ${index}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type
+          });
+        });
+        
+        console.log('📁 TEMP_DEBUG_FRONTEND_004 - Output files details:');
+        outputFiles.forEach((file, index) => {
+          console.log(`  Output ${index}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type
+          });
+        });
+
+        // Check if we have any audio files to upload
+        if (inputFiles.length === 0 && outputFiles.length === 0) {
+          onError('No audio files were generated during recording. Please check your audio devices and try again.');
+          return;
+        }
 
         // Pass to parent for backend processing
         await onRecordingComplete(dualAudioData);
@@ -271,14 +297,26 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
         return null;
       }
       
+      console.log(`🔍 Attempting to read file: ${filePath}`);
+      console.log(`🔍 File prefix: ${prefix}`);
+      
       // Read the file through Electron IPC
       const result = await window.electronAPI.file.readAudioFile(filePath);
+      console.log(`📁 IPC result for ${filePath}:`, result);
+      
       if (result.success) {
         const filename = `${prefix}-${Date.now()}.wav`;
+        console.log(`✅ Successfully read file, creating File object: ${filename}`);
         
         // Create a File object from the buffer
         const blob = new Blob([new Uint8Array(result.buffer)], { type: 'audio/wav' });
-        return new File([blob], filename, { type: 'audio/wav' });
+        const file = new File([blob], filename, { type: 'audio/wav' });
+        console.log(`✅ File object created:`, {
+          name: file.name,
+          size: file.size,
+          type: file.type
+        });
+        return file;
       } else {
         console.warn(`⚠️ Failed to read audio file ${filePath}:`, result.error);
         return null;

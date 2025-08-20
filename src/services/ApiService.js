@@ -6,7 +6,8 @@ import axios from 'axios';
  */
 class ApiService {
   constructor() {
-    this.baseURL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    // For development, always use localhost
+    this.baseURL = 'http://localhost:3001';
     this.token = null;
     this.refreshToken = null;
     
@@ -275,7 +276,7 @@ class ApiService {
   // Upload audio file for transcription
   async uploadAudio(audioFile, onProgress = null) {
     try {
-      // Use original file - no compression needed since we record at optimal 16kHz
+              // Use original file - no compression needed since we record at optimal 6kHz
       const fileToUpload = audioFile;
 
       const formData = new FormData();
@@ -305,6 +306,64 @@ class ApiService {
     }
   }
 
+  // Upload segmented dual audio files for transcription
+  async uploadSegmentedDualAudio(microphoneFiles, systemFiles, onProgress = null) {
+    try {
+      console.log('🎵 Starting segmented dual audio upload:', {
+        microphoneFiles: microphoneFiles?.length || 0,
+        systemFiles: systemFiles?.length || 0
+      });
+
+      // Create form data with all files
+      const formData = new FormData();
+      
+      // Add all microphone files
+      if (microphoneFiles && microphoneFiles.length > 0) {
+        microphoneFiles.forEach((file, index) => {
+          formData.append('microphone', file, `mic_${index}.wav`);
+        });
+      }
+      
+      // Add all system files
+      if (systemFiles && systemFiles.length > 0) {
+        systemFiles.forEach((file, index) => {
+          formData.append('system', file, `sys_${index}.wav`);
+        });
+      }
+      
+      formData.append('isSegmented', 'true');
+      formData.append('totalSegments', String(microphoneFiles?.length || 0));
+
+      // Calculate dynamic timeout based on total file sizes
+      const totalSize = [...(microphoneFiles || []), ...(systemFiles || [])]
+        .reduce((sum, file) => sum + (file.size || 0), 0);
+      const timeout = this.calculateUploadTimeout({ size: totalSize });
+
+      console.log('📤 Uploading segmented audio with timeout:', timeout);
+
+      const response = await this.api.post('/api/audio/upload-segmented-dual', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: timeout,
+        onUploadProgress: (progressEvent) => {
+          if (onProgress) {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            onProgress(percentCompleted);
+          }
+        },
+      });
+
+      console.log('✅ Segmented dual audio upload completed');
+      return response.data;
+    } catch (error) {
+      console.error('❌ Segmented dual audio upload failed:', error);
+      return this.handleError(error);
+    }
+  }
+
   // Upload dual audio files (microphone + system) for transcription
   async uploadDualAudio(microphoneFile, systemFile, onProgress = null) {
     try {
@@ -316,7 +375,7 @@ class ApiService {
         return await this.uploadSegmentedDualAudio(microphoneFile, systemFile, onProgress);
       }
 
-      // Use original files - no compression needed since we record at optimal 16kHz
+              // Use original files - no compression needed since we record at optimal 6kHz
       const micFileToUpload = microphoneFile;
       const sysFileToUpload = systemFile;
 
@@ -402,6 +461,96 @@ class ApiService {
       return {
         success: false,
         error: 'Failed to get supported formats'
+      };
+    }
+  }
+
+  // =====================================================
+  // RECORDING MANAGEMENT
+  // =====================================================
+
+  // Get all recordings (both successful and failed)
+  async getRecordings(options = {}) {
+    try {
+      const params = new URLSearchParams();
+      
+      if (options.limit) params.append('limit', options.limit);
+      if (options.offset) params.append('offset', options.offset);
+      if (options.status) params.append('status', options.status);
+      if (options.sortBy) params.append('sortBy', options.sortBy);
+      if (options.sortOrder) params.append('sortOrder', options.sortOrder);
+
+      const response = await this.api.get(`/api/recordings?${params}`);
+      
+      if (response.data.success) {
+        return {
+          success: true,
+          recordings: response.data.recordings
+        };
+      }
+
+      return { success: false, error: response.data.error };
+    } catch (error) {
+      console.error('Get recordings error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to get recordings'
+      };
+    }
+  }
+
+  // Retry a failed recording upload
+  async retryRecording(recordingId) {
+    try {
+      const response = await this.api.post(`/api/recordings/${recordingId}/retry`);
+      return response.data;
+    } catch (error) {
+      console.error('Retry recording error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to retry recording'
+      };
+    }
+  }
+
+  // Delete only the audio files from a recording (keep transcript if exists)
+  async deleteRecordingAudio(recordingId) {
+    try {
+      const response = await this.api.delete(`/api/recordings/${recordingId}/audio`);
+      return response.data;
+    } catch (error) {
+      console.error('Delete recording audio error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to delete audio files'
+      };
+    }
+  }
+
+  // Delete entire recording (including transcript)
+  async deleteRecording(recordingId) {
+    try {
+      const response = await this.api.delete(`/api/recordings/${recordingId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Delete recording error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to delete recording'
+      };
+    }
+  }
+
+  // Get recording details
+  async getRecording(recordingId) {
+    try {
+      const response = await this.api.get(`/api/recordings/${recordingId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Get recording error:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Failed to get recording'
       };
     }
   }

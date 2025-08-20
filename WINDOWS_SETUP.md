@@ -104,7 +104,7 @@ If you have multiple audio devices, you can configure them:
 
 ### Audio Quality Settings
 The application uses these default settings:
-- Sample Rate: 16kHz (optimal for speech recognition)
+- Sample Rate: 6kHz (efficient for speech recognition, reduced from 16kHz)
 - Channels: 1 (mono) for microphone, 2 (stereo) for system audio
 - Format: WAV (uncompressed for best quality)
 

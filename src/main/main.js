@@ -5,7 +5,9 @@ const Store = require('electron-store');
 const isDev = require('electron-is-dev');
 const AudioCaptureManager = require('./services/AudioCaptureManager');
 
-console.log('🚀 LeepiAI Interview Recorder starting...');
+// Load audio configuration
+const audioConfig = require('./config');
+
 
 // Enable additional features for media capture (must be set before app ready)
 app.commandLine.appendSwitch('enable-features', 'MediaFoundationVideoCapture');
@@ -100,22 +102,13 @@ app.whenReady().then(async () => {
   
   // Initialize services
   try {
-    console.log('🔧 Initializing AudioCaptureManager...');
     audioCaptureManager = new AudioCaptureManager();
     
     // Set main window reference for Windows WebRTC audio capture
     if (process.platform === 'win32' && audioCaptureManager.windowsAudioCapture) {
       audioCaptureManager.windowsAudioCapture.setMainWindow(mainWindow);
-      console.log('✅ Windows WebRTC audio capture configured with main window');
     }
     
-    console.log('✅ AudioCaptureManager initialized successfully');
-    
-    // Show startup message for Windows users
-    if (process.platform === 'win32') {
-      console.log('🔧 Windows: Native WebRTC audio capture has been set up for recording');
-      console.log('🔧 If you see any prompts, please allow the application to run');
-    }
   } catch (error) {
     console.error('❌ Failed to initialize AudioCaptureManager:', error);
     audioCaptureManager = null;
@@ -123,22 +116,17 @@ app.whenReady().then(async () => {
   
   // Handle permissions for media access
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    console.log('🔐 Permission requested:', permission);
     
     // Allow media permissions (microphone, camera, screen capture)
     const allowedPermissions = ['media', 'microphone', 'camera', 'display-capture'];
     if (allowedPermissions.includes(permission)) {
-      console.log('✅ Granting permission:', permission);
       return callback(true);
     }
-    
-    console.log('❌ Denying permission:', permission);
     callback(false);
   });
 
   // Handle screen capture requests - this is critical for system audio
   mainWindow.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
-    console.log('📺 Screen capture requested for system audio');
     
     // Get available desktop capture sources
     const { desktopCapturer } = require('electron');
@@ -146,19 +134,15 @@ app.whenReady().then(async () => {
       types: ['screen', 'window'],
       fetchWindowIcons: false
     }).then((sources) => {
-      console.log('🖥️ Available capture sources:', sources.length);
       
       if (sources.length > 0) {
         // Use the first screen source (primary display)
-        const primaryScreen = sources.find(source => source.name.includes('Entire Screen')) || sources[0];
-        console.log('✅ Granting screen capture access to:', primaryScreen.name);
-        
+        const primaryScreen = sources.find(source => source.name.includes('Entire Screen')) || sources[0];        
         callback({
           video: primaryScreen,
           audio: 'loopback' // This enables system audio capture
         });
       } else {
-        console.log('❌ No capture sources available');
         callback({});
       }
     }).catch((error) => {
@@ -167,7 +151,6 @@ app.whenReady().then(async () => {
     });
   });
   
-  console.log('✅ Electron main process initialized with enhanced media permissions');
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -200,34 +183,45 @@ process.on('unhandledRejection', (reason, promise) => {
 // Audio Recording
 ipcMain.handle('audio-start-dual-recording', async () => {
   try {
+    // TEMP_DEBUG_IPC_001: Log IPC call
+    console.log('📞 TEMP_DEBUG_IPC_001 - IPC: audio-start-dual-recording called');
+    
     if (!audioCaptureManager) {
-      console.error('❌ AudioCaptureManager not initialized');
+      console.error('❌ TEMP_DEBUG_IPC_001 - AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
 
-    console.log('🎙️ Starting dual recording...');
+    console.log('🔧 TEMP_DEBUG_IPC_001 - Calling audioCaptureManager.startDualRecording()');
     const result = await audioCaptureManager.startDualRecording();
-    console.log('✅ Dual recording started:', result);
+    console.log('✅ TEMP_DEBUG_IPC_001 - startDualRecording result:', result);
     return result;
   } catch (error) {
-    console.error('❌ Failed to start dual recording:', error);
+    console.error('❌ TEMP_DEBUG_IPC_001 - Failed to start dual recording:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('audio-stop-dual-recording', async () => {
   try {
+    // TEMP_DEBUG_IPC_002: Log IPC call
+    console.log('📞 TEMP_DEBUG_IPC_002 - IPC: audio-stop-dual-recording called');
+    
     if (!audioCaptureManager) {
-      console.error('❌ AudioCaptureManager not initialized');
+      console.error('❌ TEMP_DEBUG_IPC_002 - AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
 
-    console.log('🛑 Stopping dual recording...');
+    console.log('🔧 TEMP_DEBUG_IPC_002 - Calling audioCaptureManager.stopDualRecording()');
     const result = await audioCaptureManager.stopDualRecording();
-    console.log('✅ Dual recording stopped:', result);
+    console.log('✅ TEMP_DEBUG_IPC_002 - stopDualRecording result:', {
+      success: result.success,
+      totalSegments: result.dualAudioData?.totalSegments,
+      totalInputSize: result.dualAudioData?.totalInputSize,
+      totalOutputSize: result.dualAudioData?.totalOutputSize
+    });
     return result;
   } catch (error) {
-    console.error('❌ Failed to stop dual recording:', error);
+    console.error('❌ TEMP_DEBUG_IPC_002 - Failed to stop dual recording:', error);
     return { success: false, error: error.message };
   }
 });
@@ -253,9 +247,16 @@ ipcMain.handle('audio-stop-recording', async () => {
       console.error('❌ AudioCaptureManager not initialized');
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
-    const dualAudioData = await audioCaptureManager.stopDualRecording();
-    // Return input audio data for backward compatibility
-    return { success: true, audioData: dualAudioData.input };
+    const result = await audioCaptureManager.stopDualRecording();
+    
+    // Handle the new structure with dualAudioData
+    if (result.dualAudioData) {
+      // Return input audio data for backward compatibility
+      return { success: true, audioData: result.dualAudioData.inputFiles };
+    } else {
+      // Fallback for old structure
+      return { success: true, audioData: result.inputFiles || [] };
+    }
   } catch (error) {
     console.error('❌ Error stopping recording:', error);
     return { success: false, error: error.message };
@@ -270,9 +271,7 @@ ipcMain.handle('audio-get-devices', async () => {
       return { success: false, error: 'Audio service not ready. Please restart the application.' };
     }
 
-    console.log('🎤 Getting audio devices...');
     const result = await audioCaptureManager.getAudioDevices();
-    console.log('✅ Audio devices retrieved:', result);
     return result;
   } catch (error) {
     console.error('❌ Failed to get audio devices:', error);
@@ -457,8 +456,3 @@ if (isDev) {
     return { success: true };
   });
 }
-
-// Application menu (optional - can be implemented later)
-// This would handle creating native menus for the application
-
-console.log('🎯 IPC handlers registered successfully'); 

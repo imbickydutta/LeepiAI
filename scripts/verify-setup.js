@@ -11,7 +11,6 @@ const { spawn, exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-console.log('🔍 LeepiAI Interview Recorder - Setup Verification\n');
 
 class SetupVerifier {
   constructor() {
@@ -21,7 +20,6 @@ class SetupVerifier {
   }
 
   async runAllChecks() {
-    console.log('Running setup verification checks...\n');
 
     await this.checkNodeJS();
     await this.checkPython();
@@ -249,11 +247,9 @@ class SetupVerifier {
   async runCheck(name, checkFunction) {
     try {
       const result = await checkFunction();
-      console.log(`${name.padEnd(25)} ${result}`);
       this.passed++;
       return true;
     } catch (error) {
-      console.log(`${name.padEnd(25)} ❌ ${error.message}`);
       this.failed++;
       return false;
     }

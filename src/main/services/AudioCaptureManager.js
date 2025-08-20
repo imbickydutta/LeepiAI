@@ -91,11 +91,9 @@ class AudioCaptureManager {
     
     // For Windows, use native WebRTC audio capture
     if (this.platform === 'win32') {
-      console.log('🔧 Windows detected - using native WebRTC audio capture');
-      this.windowsAudioCapture = new WindowsAudioCapture();
-      this.recordingAvailable = true;
-      console.log(`🎙️ WindowsAudioCapture initialized with native WebRTC APIs`);
-      return;
+          this.windowsAudioCapture = new WindowsAudioCapture();
+    this.recordingAvailable = true;
+    return;
     }
     
     // For other platforms, use SoX-based recording
@@ -104,6 +102,13 @@ class AudioCaptureManager {
     
     // Platform-specific configuration
     this.config = this._getPlatformConfig();
+    
+    // TEMP_DEBUG_001: Log platform config for debugging
+    console.log('🔧 TEMP_DEBUG_001 - Platform config:', {
+      platform: this.platform,
+      sampleRate: this.config.sampleRate,
+      channels: this.config.channels
+    });
     
     // Ensure temp directory exists
     fs.ensureDirSync(this.tempDir);
@@ -115,17 +120,67 @@ class AudioCaptureManager {
     this.recordingAvailable = alternativeRecordingAvailable || webAudioRecording?.available;
     
     if (!this.recordingAvailable) {
-      console.error('❌ No audio recording method available');
-      console.error('❌ This usually means SoX is not installed or not in PATH');
       throw new Error('Audio recording requires SoX to be installed. Please install SoX and restart the application.');
     }
+  }
+
+
+
+  /**
+   * Get platform-specific configuration
+   */
+  _getPlatformConfig() {
+    // Try to load from config file, otherwise use defaults
+    let configSampleRate = 6000;
+    let configChannels = 1;
     
-    if (!record) {
-      console.warn('⚠️ Native audio recording not available - SoX may not be installed');
-      console.warn('⚠️ Will use fallback recording methods');
+    try {
+      const audioConfig = require('../config');
+      configSampleRate = audioConfig.sampleRate;
+      configChannels = audioConfig.channels;
+    } catch (error) {
+      console.warn('⚠️ Could not load audio config, using defaults:', error.message);
     }
     
-    console.log(`🎙️ AudioCaptureManager initialized for ${this.platform} with 1-minute segments`);
+    const baseConfig = {
+      sampleRate: configSampleRate,
+      channels: configChannels,
+      compress: false,
+      threshold: 0.5,
+      silence: 2.0,
+      inputDevice: null,
+      outputDevice: null,
+      recordProgram: 'sox',
+      hasVirtualAudio: false
+    };
+    
+
+
+    switch (this.platform) {
+      case 'darwin': // macOS
+        return {
+          ...baseConfig,
+          hasVirtualAudio: true,
+          recordProgram: getBundledSoxPath()
+        };
+      
+      case 'win32': // Windows
+        return {
+          ...baseConfig,
+          hasVirtualAudio: false,
+          recordProgram: 'sox'
+        };
+      
+      case 'linux': // Linux
+        return {
+          ...baseConfig,
+          hasVirtualAudio: true,
+          recordProgram: 'sox'
+        };
+      
+      default:
+        return baseConfig;
+    }
   }
 
   /**
@@ -133,10 +188,54 @@ class AudioCaptureManager {
    */
   _preSetupWindowsSox() {
     // Windows now uses native WebRTC audio capture, no SoX needed
-    if (this.platform === 'win32') {
-      console.log('🔧 Windows: Using native WebRTC audio capture (no SoX needed)');
+  }
+
+  /**
+   * Start recording using bundled SoX
+   */
+  async _startBundledSoxRecording(outputFile, type) {
+    try {
+      console.log(`🔧 Starting bundled SoX recording (${type}) to: ${outputFile}`);
+      
+      // Check if we're in a packaged app with bundled SoX
+      const isPackaged = process.resourcesPath && !process.resourcesPath.includes('node_modules');
+      
+      if (isPackaged && this.platform === 'darwin') {
+        const soxPath = path.join(process.resourcesPath, 'sox-macos');
+        
+        if (fs.existsSync(soxPath)) {
+          console.log('✅ Found bundled SoX binary:', soxPath);
+          
+          // Make it executable
+          fs.chmodSync(soxPath, '755');
+          
+          // Try to actually record using sox
+          console.log('🔧 Attempting to record with bundled SoX...');
+          try {
+            const soxRecorder = await this._startSoxRecording(outputFile, type);
+            if (soxRecorder) {
+              console.log('✅ Bundled SoX recording started successfully');
+              return soxRecorder;
+            }
+          } catch (error) {
+            console.warn('⚠️ Bundled SoX recording failed:', error.message);
+          }
+          
+          // If we get here, no recording method worked
+          console.warn('⚠️ Bundled SoX recording failed, no fallback available');
+          return null;
+        }
+      }
+      
+      console.log('⚠️ Bundled SoX not available, falling back to alternatives');
+      return null;
+    } catch (error) {
+      console.error(`❌ Bundled SoX recording failed:`, error);
+      return null;
     }
   }
+
+
 
   /**
    * Set up bundled SoX environment for node-record-lpcm16
@@ -187,7 +286,7 @@ class AudioCaptureManager {
    */
   _getPlatformConfig() {
     const config = {
-      sampleRate: 16000,
+      sampleRate: 16000,   // Use 16kHz for recording (hardware supported)
       channels: 1,
       compress: false,
       threshold: 0.5,
@@ -201,7 +300,16 @@ class AudioCaptureManager {
       
       if (!isPackaged) {
         console.log('🔧 Development mode - using system SoX');
-        return 'sox'; // Use system SoX in development
+        // In development mode, use the full path to SoX to avoid PATH issues
+        try {
+          const { execSync } = require('child_process');
+          const soxPath = execSync('which sox', { encoding: 'utf8' }).trim();
+          console.log('🔧 Found system SoX at:', soxPath);
+          return soxPath;
+        } catch (error) {
+          console.warn('⚠️ Could not find system SoX, falling back to "sox" command');
+          return 'sox'; // Fallback to "sox" command
+        }
       }
       
       // For Windows, use native WebRTC audio capture (no SoX needed)
@@ -291,13 +399,21 @@ class AudioCaptureManager {
    */
   async startDualRecording() {
     try {
+      // TEMP_DEBUG_FLOW_001: Log startDualRecording entry
+      console.log('🎯 TEMP_DEBUG_FLOW_001 - startDualRecording() CALLED');
+      console.log('🎯 TEMP_DEBUG_FLOW_001 - Platform:', this.platform);
+      console.log('🎯 TEMP_DEBUG_FLOW_001 - isRecording:', this.isRecording);
+      
       if (this.isRecording) {
         throw new Error('Recording already in progress');
       }
 
+      // TEMP_DEBUG_002: Log recording start
+      console.log('🎙️ TEMP_DEBUG_002 - Starting dual recording');
+
       // For Windows, delegate to native WebRTC audio capture
       if (this.platform === 'win32' && this.windowsAudioCapture) {
-        console.log('🎙️ Delegating to Windows native audio capture...');
+        console.log('🎯 TEMP_DEBUG_FLOW_001 - Using Windows WebRTC path');
         return await this.windowsAudioCapture.startDualRecording();
       }
 
@@ -305,14 +421,12 @@ class AudioCaptureManager {
       this.segmentIndex = 0;
       this.segments = [];
 
-      console.log('🎙️ Starting segmented dual recording (1-minute segments)...');
-
       // Start the first segment
+      console.log('🎯 TEMP_DEBUG_FLOW_001 - Calling _startNewSegment()');
       await this._startNewSegment();
 
       this.isRecording = true;
-
-      console.log('✅ Segmented dual recording started successfully');
+      console.log('🎯 TEMP_DEBUG_FLOW_001 - startDualRecording() SUCCESS');
       return {
         success: true,
         sessionId: this.sessionId,
@@ -326,27 +440,110 @@ class AudioCaptureManager {
   }
 
   /**
+   * Stop dual recording and return all recorded segments
+   */
+  async stopDualRecording() {
+    try {
+      if (!this.isRecording) {
+        throw new Error('No recording in progress');
+      }
+
+
+
+      // Stop the current segment
+      if (this.recordingTimer) {
+        clearTimeout(this.recordingTimer);
+        this.recordingTimer = null;
+      }
+
+      // Stop current segment recording
+      await this._stopCurrentSegment();
+
+      this.isRecording = false;
+
+      // Calculate actual file sizes
+      let totalInputSize = 0;
+      let totalOutputSize = 0;
+      
+      for (const segment of this.segments) {
+        try {
+          if (fs.existsSync(segment.inputFile)) {
+            const stats = fs.statSync(segment.inputFile);
+            totalInputSize += stats.size;
+          }
+          if (segment.hasOutputAudio && fs.existsSync(segment.outputFile)) {
+            const stats = fs.statSync(segment.outputFile);
+            totalOutputSize += stats.size;
+          }
+        } catch (error) {
+          console.warn(`⚠️ Could not get file size for segment ${segment.segmentId}:`, error.message);
+        }
+      }
+
+      // Prepare the result with all recorded segments
+      const dualAudioData = {
+        success: true,
+        sessionId: this.sessionId,
+        totalSegments: this.segments.length,
+        segments: this.segments.map(segment => ({
+          segmentId: segment.segmentId,
+          inputFile: segment.inputFile,
+          outputFile: segment.outputFile,
+          hasOutputAudio: segment.hasOutputAudio,
+          startTime: segment.startTime,
+          duration: this.segmentDuration
+        })),
+        inputFiles: this.segments.map(s => s.inputFile),
+        outputFiles: this.segments.filter(s => s.hasOutputAudio).map(s => s.outputFile),
+        totalDuration: this.segments.length * this.segmentDuration,
+        totalInputSize,
+        totalOutputSize
+      };
+
+      console.log('✅ Dual recording stopped successfully:', {
+        sessionId: this.sessionId,
+        totalSegments: this.segments.length,
+        hasSegments: this.segments.length > 0,
+        totalInputSize,
+        totalOutputSize
+      });
+
+      // Return in the format expected by the frontend
+      return {
+        success: true,
+        dualAudioData
+      };
+
+    } catch (error) {
+      console.error('❌ Failed to stop dual recording:', error);
+      this.isRecording = false;
+      throw error;
+    }
+  }
+
+  /**
    * Start a new 1-minute recording segment
    */
-  async _startNewSegment() {
+    async _startNewSegment() {
+    // TEMP_DEBUG_FLOW_002: Log _startNewSegment entry
+    console.log('🎯 TEMP_DEBUG_FLOW_002 - _startNewSegment() CALLED');
+    
     const segmentId = `${this.sessionId}_segment_${this.segmentIndex.toString().padStart(3, '0')}`;
     const inputFile = path.join(this.tempDir, `input_${segmentId}.wav`);
     const outputFile = path.join(this.tempDir, `output_${segmentId}.wav`);
 
-    console.log(`🎙️ Starting segment ${this.segmentIndex + 1}: ${segmentId}`);
+    // TEMP_DEBUG_003: Log segment start
+    console.log(`🎙️ TEMP_DEBUG_003 - Starting segment ${this.segmentIndex + 1}: ${segmentId}`);
 
     try {
       // Start input recording (microphone)
+      console.log('🎯 TEMP_DEBUG_FLOW_002 - Calling _startInputRecording()');
       this.inputRecorder = await this._startInputRecording(inputFile);
 
       // Start output recording (system audio) - platform dependent
       if (this.config.hasVirtualAudio) {
         this.outputRecorder = await this._startOutputRecording(outputFile);
-        if (!this.outputRecorder) {
-          console.log('⚠️ System audio recording failed, recording microphone only');
-        }
       } else {
-        console.log('⚠️ Virtual audio not available on this platform, recording microphone only');
         this.outputRecorder = null;
       }
 
@@ -360,22 +557,23 @@ class AudioCaptureManager {
         hasOutputAudio: !!this.outputRecorder
       };
       
-      console.log(`📝 Segment info:`, {
-        segmentId,
-        hasOutputAudio: segmentInfo.hasOutputAudio,
-        outputRecorder: !!this.outputRecorder
-      });
-      
       this.segments.push(segmentInfo);
       
-      console.log(`📝 Added segment ${this.segmentIndex}:`, {
-        segmentId,
-        inputFile,
-        outputFile,
-        platform: this.platform,
-        hasOutputAudio: !!this.outputRecorder,
-        totalSegments: this.segments.length
-      });
+      // TEMP_DEBUG_010: Check file sizes after recording
+      setTimeout(async () => {
+        try {
+          if (await fs.pathExists(inputFile)) {
+            const stats = await fs.stat(inputFile);
+            console.log(`📊 TEMP_DEBUG_010 - Input file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          }
+          if (await fs.pathExists(outputFile)) {
+            const stats = await fs.stat(outputFile);
+            console.log(`📊 TEMP_DEBUG_010 - Output file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          }
+        } catch (error) {
+          console.warn('⚠️ TEMP_DEBUG_010 - Could not check file sizes:', error.message);
+        }
+      }, 1000);
 
       // Set timer to stop this segment and start next one
       this.recordingTimer = setTimeout(async () => {
@@ -394,75 +592,245 @@ class AudioCaptureManager {
   }
 
   /**
+   * Stop the current recording segment
+   */
+  async _stopCurrentSegment() {
+    try {
+      // Stop input recording
+      if (this.inputRecorder) {
+        if (typeof this.inputRecorder.stop === 'function') {
+          await this.inputRecorder.stop();
+        } else if (this.inputRecorder.destroy) {
+          this.inputRecorder.destroy();
+        }
+        this.inputRecorder = null;
+      }
+
+      // Stop output recording
+      if (this.outputRecorder) {
+        if (typeof this.outputRecorder.stop === 'function') {
+          await this.outputRecorder.stop();
+        } else if (this.outputRecorder.destroy) {
+          this.outputRecorder.destroy();
+        }
+        this.outputRecorder = null;
+      }
+      
+      // TEMP_DEBUG_011: Check final file sizes
+      try {
+        const currentSegment = this.segments[this.segments.length - 1];
+        if (currentSegment) {
+          if (await fs.pathExists(currentSegment.inputFile)) {
+            const stats = await fs.stat(currentSegment.inputFile);
+            console.log(`📊 TEMP_DEBUG_011 - Final input size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          }
+          if (await fs.pathExists(currentSegment.outputFile)) {
+            const stats = await fs.stat(currentSegment.outputFile);
+            console.log(`📊 TEMP_DEBUG_011 - Final output size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ TEMP_DEBUG_011 - Could not check final file sizes:', error.message);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to stop current segment:`, error);
+      // Don't throw error, just log it
+    }
+  }
+
+  /**
    * Start input recording (microphone)
    */
   async _startInputRecording(outputFile) {
-    console.log(`🎤 Starting input recording to: ${outputFile}`);
+    // TEMP_DEBUG_FLOW_003: Log _startInputRecording entry
+    console.log('🎯 TEMP_DEBUG_FLOW_003 - _startInputRecording() CALLED');
+    
+    // TEMP_DEBUG_004: Log input recording start
+    console.log(`🎤 TEMP_DEBUG_004 - Starting input recording to: ${outputFile}`);
+    console.log('🔧 TEMP_DEBUG_004 - Sample rate:', this.config.sampleRate, 'Hz, Channels:', this.config.channels);
     
     // Ensure output directory exists
     const outputDir = path.dirname(outputFile);
     if (!fs.existsSync(outputDir)) {
       fs.ensureDirSync(outputDir);
-      console.log('✅ Created output directory:', outputDir);
     }
     
     // Windows uses native WebRTC audio capture (handled in constructor)
     if (this.platform === 'win32') {
       console.log('🔧 Windows: Using native WebRTC audio capture (no SoX needed)');
-      // Create a minimal audio file as placeholder
-      const minimalWavHeader = this._createMinimalWavHeader();
-      await fs.writeFile(outputFile, minimalWavHeader);
-      
-      return {
-        stop: () => console.log('🛑 Windows WebRTC recorder stopped'),
-        stream: () => ({ pipe: () => {} })
-      };
+      // Try to actually record using native WebRTC
+      try {
+        const recorder = this.windowsAudioCapture.startRecording(outputFile);
+        console.log('✅ Windows WebRTC recording started');
+        return recorder;
+      } catch (error) {
+        console.error('❌ Windows WebRTC recording failed:', error);
+        throw new Error('Windows WebRTC recording failed. Please check audio permissions.');
+      }
     }
     
-    // For non-Windows platforms, try bundled SoX first
+    // For macOS, try to use system audio capture
+    if (this.platform === 'darwin') {
+      // TEMP_DEBUG_PATH_001: Log macOS path
+      console.log('🔧 TEMP_DEBUG_PATH_001 - macOS detected - attempting to record with SoX');
+      console.log('🔧 TEMP_DEBUG_PATH_001 - recordProgram from config:', this.config.recordProgram);
+      console.log('🔧 TEMP_DEBUG_PATH_001 - record module available:', !!record);
+      console.log('🍎 TEMP_DEBUG_PATH_001 - macOS detected - attempting system audio capture');
+      
+      try {
+        // Try to use the bundled sox-macos binary if available
+        console.log('🎯 TEMP_DEBUG_FLOW_003 - Calling _startBundledSoxRecording()');
+        console.log('🔧 TEMP_DEBUG_PATH_001 - Attempting bundled SoX recording...');
+        const bundledRecorder = await this._startBundledSoxRecording(outputFile, 'input');
+        if (bundledRecorder) {
+          console.log('✅ TEMP_DEBUG_PATH_001 - Using bundled SoX for macOS input recording');
+          console.log('🎯 TEMP_DEBUG_FLOW_003 - _startInputRecording() SUCCESS (bundled SoX)');
+          return bundledRecorder;
+        } else {
+          console.log('⚠️ TEMP_DEBUG_PATH_001 - Bundled SoX recording returned null');
+        }
+      } catch (error) {
+        console.warn('⚠️ TEMP_DEBUG_PATH_001 - Bundled SoX recording failed on macOS:', error.message);
+      }
+      
+      // For macOS, try to use system audio capture as a fallback
+      console.log('⚠️ TEMP_DEBUG_004 - Attempting system audio capture fallback...');
+      
+      try {
+        // Try to use the bundled sox-macos binary directly
+        const soxPath = path.join(process.resourcesPath || __dirname, '../../../binaries/sox-macos');
+        console.log('🔧 TEMP_DEBUG_004 - Checking sox-macos path:', soxPath);
+        console.log('🔧 TEMP_DEBUG_004 - Path exists:', fs.existsSync(soxPath));
+        
+        if (fs.existsSync(soxPath)) {
+          console.log('✅ TEMP_DEBUG_004 - Found sox-macos binary, attempting direct recording...');
+          
+          // Make it executable
+          fs.chmodSync(soxPath, '755');
+          
+          // Try to actually record using sox
+          console.log('🎯 TEMP_DEBUG_FLOW_003 - Calling _startSoxRecording()');
+          console.log('🔧 TEMP_DEBUG_004 - Calling _startSoxRecording...');
+          const soxRecorder = await this._startSoxRecording(outputFile, 'input');
+          if (soxRecorder) {
+            console.log('✅ TEMP_DEBUG_004 - Sox recording started successfully');
+            console.log('🎯 TEMP_DEBUG_FLOW_003 - _startInputRecording() SUCCESS (SoX fallback)');
+            return soxRecorder;
+          } else {
+            console.log('⚠️ TEMP_DEBUG_004 - _startSoxRecording returned null');
+          }
+        } else {
+          console.log('⚠️ TEMP_DEBUG_004 - sox-macos binary not found at:', soxPath);
+        }
+      } catch (error) {
+        console.warn('⚠️ TEMP_DEBUG_004 - Sox fallback failed:', error.message);
+      }
+      
+      // If no recording method worked, throw an error
+      throw new Error(`No audio recording method available on ${this.platform}. Please install required audio tools.`);
+    }
+    
+    // For other non-Windows platforms, try bundled SoX first
+    console.log('🎯 TEMP_DEBUG_FLOW_003 - Trying other platforms bundled SoX');
     try {
+      console.log('🎯 TEMP_DEBUG_FLOW_003 - Calling _startBundledSoxRecording() (other platforms)');
       const bundledRecorder = await this._startBundledSoxRecording(outputFile, 'input');
       if (bundledRecorder) {
         console.log('✅ Using bundled SoX for input recording');
+        console.log('🎯 TEMP_DEBUG_FLOW_003 - _startInputRecording() SUCCESS (other platforms bundled SoX)');
         return bundledRecorder;
       }
     } catch (error) {
       console.warn('⚠️ Bundled SoX recording failed, trying node-record-lpcm16:', error.message);
     }
     
+    // TEMP_DEBUG_FALLBACK_002: Check record module availability
+    console.log('🔧 TEMP_DEBUG_FALLBACK_002 - Record module available:', !!record);
+    console.log('🔧 TEMP_DEBUG_FALLBACK_002 - Record module type:', typeof record);
+    
     // Fallback to node-record-lpcm16
     if (!record) {
-      console.warn('⚠️ Native recording not available, creating placeholder recording');
+      // TEMP_DEBUG_FALLBACK_001: Log fallback path
+      console.log('⚠️ TEMP_DEBUG_FALLBACK_001 - Native recording not available, attempting alternative methods');
       
-      // Create a minimal audio file for testing
-      const minimalWavHeader = this._createMinimalWavHeader();
-      await fs.writeFile(outputFile, minimalWavHeader);
+      // For macOS, try to use system audio capture as a fallback
+      if (this.platform === 'darwin') {
+        try {
+          console.log('🍎 TEMP_DEBUG_FALLBACK_001 - macOS: Attempting system audio capture fallback...');
+          
+          // Try to use the bundled sox-macos binary directly
+          const soxPath = path.join(process.resourcesPath || __dirname, '../../../binaries/sox-macos');
+          
+          if (fs.existsSync(soxPath)) {
+            console.log('✅ TEMP_DEBUG_FALLBACK_001 - Found sox-macos binary, attempting direct recording...');
+            
+            // Make it executable
+            fs.chmodSync(soxPath, '755');
+            
+            // Try to actually record using sox
+            const soxRecorder = await this._startSoxRecording(outputFile, 'input');
+            if (soxRecorder) {
+              console.log('✅ TEMP_DEBUG_FALLBACK_001 - Sox recording started successfully');
+              return soxRecorder;
+            }
+          }
+        } catch (error) {
+          console.warn('⚠️ TEMP_DEBUG_FALLBACK_001 - Sox fallback failed:', error.message);
+        }
+      }
       
-      // Return a mock recorder that can be stopped
-      return {
-        stop: () => {
-          console.log('🛑 Mock recorder stopped');
-        },
-        stream: () => ({
-          pipe: () => {}
-        })
-      };
+      // If we get here, no recording method worked
+      throw new Error(`No audio recording method available on ${this.platform}. Please install required audio tools.`);
     }
 
-    console.log(`🔧 Using node-record-lpcm16 with record program: ${this.config.recordProgram}`);
+    // TEMP_DEBUG_007: Log node-record-lpcm16 usage
+    console.log('🎯 TEMP_DEBUG_FLOW_003 - Using node-record-lpcm16 (final fallback)');
+    console.log(`🔧 TEMP_DEBUG_007 - Using node-record-lpcm16 (fallback)`);
+    console.log('🔧 TEMP_DEBUG_007 - Config sample rate:', this.config.sampleRate);
+    console.log('🔧 TEMP_DEBUG_007 - Config channels:', this.config.channels);
     
-    const recorder = record.record({
-      sampleRate: this.config.sampleRate,
-      channels: this.config.channels,
-      compress: this.config.compress,
-      threshold: this.config.threshold,
-      silence: this.config.silence,
-      device: this.config.inputDevice,
-      recordProgram: this.config.recordProgram,
-    });
+    try {
+      const recorder = record.record({
+        sampleRate: this.config.sampleRate,
+        channels: this.config.channels,
+        compress: this.config.compress,
+        threshold: this.config.threshold,
+        silence: this.config.silence,
+        device: this.config.inputDevice,
+        recordProgram: this.config.recordProgram,
+      });
 
-    recorder.stream().pipe(fs.createWriteStream(outputFile));
-    return recorder;
+      // TEMP_DEBUG_008: Log recorder creation
+      console.log('✅ TEMP_DEBUG_008 - node-record-lpcm16 recorder created');
+      console.log('🎯 TEMP_DEBUG_FLOW_003 - _startInputRecording() SUCCESS (node-record-lpcm16)');
+      
+      // Add error handling to the stream
+      const writeStream = fs.createWriteStream(outputFile);
+      writeStream.on('error', (error) => {
+        console.error('❌ Write stream error:', error);
+      });
+      writeStream.on('finish', () => {
+        try {
+          const stats = fs.statSync(outputFile);
+          // TEMP_DEBUG_009: Log file size for debugging
+          console.log(`📊 TEMP_DEBUG_009 - node-record-lpcm16 file size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+        } catch (error) {
+          console.warn('⚠️ TEMP_DEBUG_009 - Could not check file size:', error.message);
+        }
+      });
+
+      recorder.stream().pipe(writeStream);
+      
+      // Add error handling to the recorder
+      recorder.on('error', (error) => {
+        console.error('❌ Recorder error:', error);
+      });
+      
+      return recorder;
+    } catch (error) {
+      console.error('❌ Failed to create node-record-lpcm16 recorder:', error);
+      throw error;
+    }
   }
 
   /**
@@ -470,6 +838,9 @@ class AudioCaptureManager {
    */
   async _startOutputRecording(outputFile) {
     console.log(`🎙️ Starting output recording to: ${outputFile}`);
+    console.log('🔧 Platform:', this.platform);
+    console.log('🔧 Config:', this.config);
+    console.log('🔧 Record module available:', !!record);
     
     // Try bundled SoX first, then fallback to node-record-lpcm16
     try {
@@ -484,7 +855,36 @@ class AudioCaptureManager {
     
     // Fallback to node-record-lpcm16
     if (!record) {
-      console.warn('⚠️ Native recording not available, skipping system audio recording');
+      console.warn('⚠️ Native recording not available, attempting alternative methods');
+      
+      // For macOS, try to use system audio capture as a fallback
+      if (this.platform === 'darwin') {
+        try {
+          console.log('🍎 macOS: Attempting system audio capture fallback...');
+          
+          // Try to use the bundled sox-macos binary directly
+          const soxPath = path.join(process.resourcesPath || __dirname, '../../../binaries/sox-macos');
+          
+          if (fs.existsSync(soxPath)) {
+            console.log('✅ Found sox-macos binary, attempting direct recording...');
+            
+            // Make it executable
+            fs.chmodSync(soxPath, '755');
+            
+            // Try to actually record using sox
+            const soxRecorder = await this._startSoxRecording(outputFile, 'output');
+            if (soxRecorder) {
+              console.log('✅ Sox output recording started successfully');
+              return soxRecorder;
+            }
+          }
+        } catch (error) {
+          console.warn('⚠️ Sox fallback failed:', error.message);
+        }
+      }
+      
+      // If we get here, no recording method worked
+      console.warn('⚠️ No system audio recording method available');
       return null;
     }
 
@@ -516,19 +916,54 @@ class AudioCaptureManager {
         return await this._startWindowsOutputRecording(outputFile);
 
       case 'linux': // Linux - PulseAudio
-        return record.record({
-          sampleRate: this.config.sampleRate,
-          channels: 2,
-          compress: this.config.compress,
-          threshold: this.config.threshold,
-          silence: this.config.silence,
-          device: this.config.outputDevice,
-          recordProgram: this.config.recordProgram,
-        });
+        try {
+          console.log('🐧 Attempting to record system audio using PulseAudio...');
+          const recorder = record.record({
+            sampleRate: this.config.sampleRate,
+            channels: 2,
+            compress: this.config.compress,
+            threshold: this.config.threshold,
+            silence: this.config.silence,
+            device: this.config.outputDevice,
+            recordProgram: this.config.recordProgram,
+          });
+          
+          recorder.stream().pipe(fs.createWriteStream(outputFile));
+          console.log('✅ System audio recording started successfully');
+          return recorder;
+        } catch (error) {
+          console.warn('⚠️ Failed to start system audio recording:', error.message);
+          console.warn('⚠️ Recording microphone only. Install PulseAudio for system audio capture.');
+          return null;
+        }
 
       default:
-        console.warn('⚠️ Output recording not supported on this platform');
+        console.warn('⚠️ Platform not supported for system audio recording');
         return null;
+    }
+  }
+
+  /**
+   * Start Windows-specific output recording
+   */
+  async _startWindowsOutputRecording(outputFile) {
+    try {
+      console.log('🪟 Attempting Windows system audio recording...');
+      
+      // For Windows, we'll use the WindowsAudioCapture service
+      if (this.windowsAudioCapture) {
+        console.log('✅ Using Windows native WebRTC for system audio');
+        return {
+          stop: () => console.log('🛑 Windows WebRTC output recorder stopped'),
+          stream: () => ({ pipe: () => {} })
+        };
+      }
+      
+      console.warn('⚠️ Windows audio capture not available');
+      return null;
+    } catch (error) {
+      console.error('❌ Windows output recording failed:', error);
+      return null;
     }
   }
 
@@ -536,21 +971,28 @@ class AudioCaptureManager {
    * Start recording using bundled SoX directly
    */
   async _startBundledSoxRecording(outputFile, type = 'input') {
+    // TEMP_DEBUG_SOX_006: Log bundled SoX recording start
+    console.log('🎙️ TEMP_DEBUG_SOX_006 - Starting bundled SoX recording...');
+    console.log('🎙️ TEMP_DEBUG_SOX_006 - Output file:', outputFile);
+    console.log('🎙️ TEMP_DEBUG_SOX_006 - Type:', type);
+    console.log('🎙️ TEMP_DEBUG_SOX_006 - Platform:', this.platform);
+    console.log('🎙️ TEMP_DEBUG_SOX_006 - Config sample rate:', this.config.sampleRate, 'Hz');
+    
     try {
       // Windows uses native WebRTC audio capture (no SoX needed)
       if (this.platform === 'win32') {
-        console.log('🔧 Windows: Using native WebRTC audio capture (no SoX needed)');
+        console.log('🔧 TEMP_DEBUG_SOX_006 - Windows: Using native WebRTC audio capture (no SoX needed)');
         return null;
       }
       
       // Get bundled SoX path
       const soxPath = this.config.recordProgram;
       
-      console.log('🔍 Debug - recordProgram from config:', soxPath);
-      console.log('🔍 Debug - recordProgram type:', typeof soxPath);
-      console.log('🔍 Debug - platform:', this.platform);
-      console.log('🔍 Debug - isPackaged:', process.resourcesPath && !process.resourcesPath.includes('node_modules'));
-      console.log('🔍 Debug - resourcesPath:', process.resourcesPath);
+      console.log('🔍 TEMP_DEBUG_SOX_006 - recordProgram from config:', soxPath);
+      console.log('🔍 TEMP_DEBUG_SOX_006 - recordProgram type:', typeof soxPath);
+      console.log('🔍 TEMP_DEBUG_SOX_006 - platform:', this.platform);
+      console.log('🔍 TEMP_DEBUG_SOX_006 - isPackaged:', process.resourcesPath && !process.resourcesPath.includes('node_modules'));
+      console.log('🔍 TEMP_DEBUG_SOX_006 - resourcesPath:', process.resourcesPath);
       
       // Also log to file for packaged app debugging
       logToFile(`Debug - recordProgram from config: ${soxPath}`, 'DEBUG');
@@ -571,35 +1013,25 @@ class AudioCaptureManager {
         return null;
       }
       
-      console.log(`🎙️ Starting bundled SoX recording (${type}) to: ${outputFile}`);
-      console.log(`🔧 Using bundled SoX: ${soxPath}`);
-      logToFile(`Starting bundled SoX recording (${type}) to: ${outputFile}`, 'INFO');
-      logToFile(`Using bundled SoX: ${soxPath}`, 'INFO');
-      
       // Check if bundled SoX exists
       if (!fs.existsSync(soxPath)) {
-        console.warn('⚠️ Bundled SoX not found at:', soxPath);
         return null;
       }
-      
-      // Use the pre-configured SoX path (already set up in constructor)
-      const actualSoxPath = soxPath;
       
       // Ensure output directory exists
       const outputDir = path.dirname(outputFile);
       if (!fs.existsSync(outputDir)) {
         fs.ensureDirSync(outputDir);
-        console.log('✅ Created output directory:', outputDir);
       }
-      
-      // macOS-specific SoX command
-      const device = type === 'input' ? 'default' : this.config.outputDevice || 'default';
-      const soxCommand = `"${soxPath}" -t coreaudio ${device} "${outputFile}"`;
-      
-      console.log(`🔧 SoX command: ${soxCommand}`);
       
       // Start SoX process
       const { spawn } = require('child_process');
+      
+      // TEMP_DEBUG_SOX_007: Log SoX process creation
+      const soxArgs = this._getSoxArgs(outputFile, type);
+      console.log('🔧 TEMP_DEBUG_SOX_007 - Bundled SoX path:', soxPath);
+      console.log('🔧 TEMP_DEBUG_SOX_007 - SoX arguments:', soxArgs);
+      console.log(`🔧 TEMP_DEBUG_SOX_007 - Full command: ${soxPath} ${soxArgs.join(' ')}`);
       
       const spawnOptions = {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -607,67 +1039,148 @@ class AudioCaptureManager {
         detached: false
       };
       
-      console.log(`🔧 Spawning SoX with path: ${actualSoxPath}`);
-      console.log(`🔧 Spawn options:`, spawnOptions);
-      logToFile(`Spawning SoX with path: ${actualSoxPath}`, 'INFO');
-      
-      const soxProcess = spawn(actualSoxPath, this._getSoxArgs(outputFile, type), spawnOptions);
+      const soxProcess = spawn(soxPath, soxArgs, spawnOptions);
       
       // Handle process events
       soxProcess.on('error', (error) => {
-        console.error('❌ SoX process error:', error);
-        logToFile(`SoX process error: ${error.message}`, 'ERROR');
+        console.error('❌ SoX error:', error.message);
       });
       
       soxProcess.on('exit', (code) => {
-        console.log(`🛑 SoX process exited with code: ${code}`);
+        if (code !== 0) {
+          console.error('❌ SoX failed with code:', code);
+        }
       });
       
-      // Add stderr handler for better debugging
+      // Add stderr handler for debugging
       soxProcess.stderr.on('data', (data) => {
-        console.warn('⚠️ SoX stderr:', data.toString());
+        console.warn('⚠️ SoX stderr:', data.toString().trim());
       });
-      
-      // Return a recorder object that can be stopped
+
       return {
         stop: () => {
-          console.log('🛑 Stopping bundled SoX recording...');
-          try {
-            soxProcess.kill('SIGTERM'); // Graceful termination on Unix
-          } catch (error) {
-            console.warn('⚠️ Error stopping SoX process:', error.message);
-          }
+          console.log(`🛑 Stopping ${type} sox recording...`);
+          soxProcess.kill('SIGTERM');
         },
         stream: () => ({
           pipe: () => {}
-        }),
-        process: soxProcess
+        })
       };
-      
     } catch (error) {
-      console.error('❌ Bundled SoX recording failed:', error);
-      logToFile(`Bundled SoX recording failed: ${error.message}`, 'ERROR');
+      console.error(`❌ Failed to start ${type} sox recording:`, error);
       return null;
     }
+  }
+
+  /**
+   * Start SoX recording (wrapper method)
+   */
+  async _startSoxRecording(outputFile, type = 'input') {
+    // TEMP_DEBUG_SOX_002: Log SoX recording start
+    console.log('🎙️ TEMP_DEBUG_SOX_002 - Starting SoX recording...');
+    console.log('🎙️ TEMP_DEBUG_SOX_002 - Output file:', outputFile);
+    console.log('🎙️ TEMP_DEBUG_SOX_002 - Type:', type);
+    console.log('🎙️ TEMP_DEBUG_SOX_002 - Platform:', this.platform);
+    console.log('🎙️ TEMP_DEBUG_SOX_002 - Config sample rate:', this.config.sampleRate, 'Hz');
+    
+    // In development mode, try to use system SoX directly
+    if (!process.resourcesPath || process.resourcesPath.includes('node_modules')) {
+      console.log('🔧 TEMP_DEBUG_SOX_002 - Development mode - attempting to use system SoX directly');
+      try {
+        const { spawn } = require('child_process');
+        const soxPath = this.config.recordProgram;
+        
+        console.log('🔧 TEMP_DEBUG_SOX_002 - Using SoX path:', soxPath);
+        
+        // Get SoX arguments
+        const args = this._getSoxArgs(outputFile, type);
+        
+        // TEMP_DEBUG_SOX_003: Log SoX command execution
+        console.log('🔧 TEMP_DEBUG_SOX_003 - SoX arguments:', args);
+        console.log(`🔧 TEMP_DEBUG_SOX_003 - Full SoX command: ${soxPath} ${args.join(' ')}`);
+        
+        const soxProcess = spawn(soxPath, args);
+        
+        // Handle process events
+        soxProcess.on('error', (error) => {
+          console.error('❌ TEMP_DEBUG_SOX_002 - SoX error:', error.message);
+        });
+        
+        soxProcess.on('exit', (code) => {
+          if (code !== 0) {
+            console.error('❌ TEMP_DEBUG_SOX_002 - SoX failed with code:', code);
+          } else {
+            console.log('✅ TEMP_DEBUG_SOX_002 - SoX recording completed successfully');
+          }
+        });
+        
+        // Add stderr handler for debugging
+        soxProcess.stderr.on('data', (data) => {
+          console.warn('⚠️ TEMP_DEBUG_SOX_002 - SoX stderr:', data.toString().trim());
+        });
+        
+        // Return recorder object
+        return {
+          stop: async () => {
+            console.log('🛑 TEMP_DEBUG_SOX_002 - Stopping SoX recording...');
+            soxProcess.kill('SIGTERM');
+            // Wait a bit for the process to finish
+            await new Promise(resolve => setTimeout(resolve, 500));
+          },
+          stream: () => ({
+            pipe: () => {}
+          })
+        };
+      } catch (error) {
+        console.error('❌ TEMP_DEBUG_SOX_002 - Failed to start system SoX recording:', error);
+        return null;
+      }
+    }
+    
+    // In packaged mode, use bundled SoX
+    console.log('🔧 TEMP_DEBUG_SOX_002 - Packaged mode - using bundled SoX');
+    return await this._startBundledSoxRecording(outputFile, type);
   }
   
   /**
    * Get SoX command line arguments
    */
   _getSoxArgs(outputFile, type) {
+    // TEMP_DEBUG_SOX_004: Log SoX args generation
+    console.log('🔧 TEMP_DEBUG_SOX_004 - Generating SoX arguments...');
+    console.log('🔧 TEMP_DEBUG_SOX_004 - Type:', type);
+    console.log('🔧 TEMP_DEBUG_SOX_004 - Platform:', this.platform);
+    console.log('🔧 TEMP_DEBUG_SOX_004 - Config sample rate:', this.config.sampleRate, 'Hz');
+    console.log('🔧 TEMP_DEBUG_SOX_004 - Config channels:', this.config.channels);
+    
     const args = [];
     
     // Windows uses native WebRTC audio capture (no SoX needed)
     if (this.platform === 'win32') {
-      console.log('🔧 Windows: Using native WebRTC audio capture (no SoX args needed)');
+      console.log('🔧 TEMP_DEBUG_SOX_004 - Windows: Using native WebRTC audio capture (no SoX args needed)');
       return [];
     }
     
-    // macOS arguments
-    args.push('-t', 'coreaudio');
-    args.push(type === 'input' ? 'default' : (this.config.outputDevice || 'default'));
-    args.push(outputFile);
+    // Add sample rate and channel configuration
+    args.push('-r', String(this.config.sampleRate));  // Sample rate (6kHz)
+    args.push('-c', String(this.config.channels));    // Channels (1 = mono)
     
+    // macOS arguments for recording
+    if (type === 'input') {
+      // For microphone input: sox -r <sampleRate> -c <channels> -d <outputFile> trim 0 <duration>
+      // -d means "default input device"
+      args.push('-d', outputFile, 'trim', '0', String(this.segmentDuration || 60));
+    } else {
+      // For system audio output: sox -r <sampleRate> -c <channels> -t coreaudio <device> <outputFile> trim 0 <duration>
+      // -t coreaudio means "CoreAudio input type"
+      const outputDevice = this.config.outputDevice || 'default';
+      args.push('-t', 'coreaudio', outputDevice, outputFile, 'trim', '0', String(this.segmentDuration || 60));
+    }
+    
+    // TEMP_DEBUG_SOX_005: Log final SoX args
+    console.log(`🔧 TEMP_DEBUG_SOX_005 - Final SoX args for ${type}:`, args);
+    console.log(`🔧 TEMP_DEBUG_SOX_005 - Full command preview: sox ${args.join(' ')}`);
+    console.log(`🔧 TEMP_DEBUG_SOX_005 - Sample rate: ${this.config.sampleRate}Hz, Channels: ${this.config.channels}`);
     return args;
   }
 
@@ -685,25 +1198,21 @@ class AudioCaptureManager {
       console.log('✅ Created output directory:', outputDir);
     }
     
-    // Create a minimal audio file as placeholder (actual recording handled by WindowsAudioCapture)
+    // Try to actually record using Windows WebRTC
     try {
-      const minimalWavHeader = this._createMinimalWavHeader();
-      await fs.writeFile(outputFile, minimalWavHeader);
-      console.log('✅ Created minimal output audio file for Windows');
-      
-      // Return a mock recorder
-      return {
-        stop: () => {
-          console.log('🛑 Windows WebRTC output recorder stopped');
-        },
-        stream: () => ({
-          pipe: () => {}
-        })
-      };
-    } catch (fileError) {
-      console.warn('⚠️ Failed to create minimal output file:', fileError.message);
-      return null;
+      console.log('🔧 Attempting Windows WebRTC output recording...');
+      const recorder = this.windowsAudioCapture.startOutputRecording(outputFile);
+      if (recorder) {
+        console.log('✅ Windows WebRTC output recording started');
+        return recorder;
+      }
+    } catch (error) {
+      console.warn('⚠️ Windows WebRTC output recording failed:', error.message);
     }
+    
+    // If no recording method worked, return null
+    console.warn('⚠️ No output recording method available for Windows');
+    return null;
   }
 
   /**
@@ -808,54 +1317,58 @@ class AudioCaptureManager {
 
       this.isRecording = false;
 
-      // Debug: Log segment details
-      console.log('🔍 Segment details:', this.segments.map((s, i) => ({
-        index: i,
-        segmentId: s.segmentId,
-        inputFile: s.inputFile,
-        outputFile: s.outputFile,
-        inputSize: s.inputSize,
-        outputSize: s.outputSize,
-        duration: s.duration
-      })));
-
-      // Calculate total stats
+      // Calculate actual file sizes
       let totalInputSize = 0;
       let totalOutputSize = 0;
-      let totalDuration = 0;
-
+      
       for (const segment of this.segments) {
-        totalInputSize += segment.inputSize || 0;
-        totalOutputSize += segment.outputSize || 0;
-        totalDuration += segment.duration || 0;
+        try {
+          if (fs.existsSync(segment.inputFile)) {
+            const stats = fs.statSync(segment.inputFile);
+            totalInputSize += stats.size;
+          }
+          if (segment.hasOutputAudio && fs.existsSync(segment.outputFile)) {
+            const stats = fs.statSync(segment.outputFile);
+            totalOutputSize += stats.size;
+          }
+        } catch (error) {
+          console.warn(`⚠️ Could not get file size for segment ${segment.segmentId}:`, error.message);
+        }
       }
 
-      // Create a serializable result object
-      const result = {
+      // Prepare the result with all recorded segments
+      const dualAudioData = {
         success: true,
         sessionId: this.sessionId,
         totalSegments: this.segments.length,
-        totalInputSize,
-        totalOutputSize,
-        totalDuration,
         segments: this.segments.map(segment => ({
           segmentId: segment.segmentId,
           inputFile: segment.inputFile,
           outputFile: segment.outputFile,
-          inputSize: segment.inputSize || 0,
-          outputSize: segment.outputSize || 0,
-          duration: segment.duration || 0,
+          hasOutputAudio: segment.hasOutputAudio,
           startTime: segment.startTime,
-          endTime: segment.endTime
+          duration: this.segmentDuration
         })),
         inputFiles: this.segments.map(s => s.inputFile),
-        outputFiles: this.segments.map(s => s.outputFile)
+        outputFiles: this.segments.filter(s => s.hasOutputAudio).map(s => s.outputFile),
+        totalDuration: this.segments.length * this.segmentDuration,
+        totalInputSize,
+        totalOutputSize
       };
 
-      console.log(`✅ Segmented recording stopped: ${this.segments.length} segments, ${(totalInputSize / (1024 * 1024)).toFixed(2)}MB total input, ${(totalOutputSize / (1024 * 1024)).toFixed(2)}MB total output`);
-      console.log('📤 Returning result:', JSON.stringify(result, null, 2));
-      
-      return result;
+      console.log('✅ Dual recording stopped successfully:', {
+        sessionId: this.sessionId,
+        totalSegments: this.segments.length,
+        hasSegments: this.segments.length > 0,
+        totalInputSize,
+        totalOutputSize
+      });
+
+      // Return in the format expected by the frontend
+      return {
+        success: true,
+        dualAudioData
+      };
 
     } catch (error) {
       console.error('❌ Failed to stop dual recording:', error);
@@ -945,45 +1458,6 @@ class AudioCaptureManager {
     // 16-bit audio = 2 bytes per sample
     const bytesPerSecond = sampleRate * channels * 2;
     return fileSizeBytes / bytesPerSecond;
-  }
-
-  /**
-   * Create a minimal WAV header for placeholder files
-   */
-  _createMinimalWavHeader() {
-    const sampleRate = this.config.sampleRate;
-    const channels = this.config.channels;
-    const bitsPerSample = 16;
-    const bytesPerSample = bitsPerSample / 8;
-    const blockAlign = channels * bytesPerSample;
-    const byteRate = sampleRate * blockAlign;
-    
-    // Create a minimal 1-second silent WAV file
-    const dataSize = sampleRate * blockAlign;
-    const fileSize = 36 + dataSize;
-    
-    const buffer = Buffer.alloc(44 + dataSize);
-    let offset = 0;
-    
-    // WAV header
-    buffer.write('RIFF', offset); offset += 4;
-    buffer.writeUInt32LE(fileSize, offset); offset += 4;
-    buffer.write('WAVE', offset); offset += 4;
-    buffer.write('fmt ', offset); offset += 4;
-    buffer.writeUInt32LE(16, offset); offset += 4; // fmt chunk size
-    buffer.writeUInt16LE(1, offset); offset += 2; // PCM format
-    buffer.writeUInt16LE(channels, offset); offset += 2;
-    buffer.writeUInt32LE(sampleRate, offset); offset += 4;
-    buffer.writeUInt32LE(byteRate, offset); offset += 4;
-    buffer.writeUInt16LE(blockAlign, offset); offset += 2;
-    buffer.writeUInt16LE(bitsPerSample, offset); offset += 2;
-    buffer.write('data', offset); offset += 4;
-    buffer.writeUInt32LE(dataSize, offset); offset += 4;
-    
-    // Fill with silence (zeros)
-    buffer.fill(0, offset);
-    
-    return buffer;
   }
 
   /**
@@ -1120,6 +1594,34 @@ class AudioCaptureManager {
           instructions: ['Audio recording may be limited on this platform'],
           hasVirtualAudio: false
         };
+    }
+  }
+
+  /**
+   * Get available audio devices
+   */
+  async getAudioDevices() {
+    try {
+      console.log('🎤 Getting audio devices...');
+      
+      // Return devices in the format expected by the frontend
+      // Each device should have a 'kind' property for filtering
+      const devices = [
+        { id: 'default', name: 'Default Microphone', kind: 'audioinput' },
+        { id: 'default', name: 'Default Speaker', kind: 'audiooutput' }
+      ];
+      
+      console.log('✅ Audio devices retrieved:', devices);
+      return {
+        success: true,
+        devices
+      };
+    } catch (error) {
+      console.error('❌ Failed to get audio devices:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 

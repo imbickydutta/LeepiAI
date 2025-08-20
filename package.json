@@ -58,6 +58,7 @@
     "remark-gfm": "^4.0.1",
     "speaker": "^0.5.5",
     "uuid": "^11.1.0",
+
     "webm-to-wav-converter": "^1.1.0"
   },
   "build": {
