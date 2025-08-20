@@ -235,6 +235,99 @@ function RecordingPanel({ onRecordingComplete, onError, onSuccess }) {
           segments: result.dualAudioData?.segments || [] // Add segments data for accurate timestamps
         };
 
+        // COMPREHENSIVE DEBUG: Log the complete data flow
+        console.log('🔍 COMPREHENSIVE_DEBUG - Complete data flow analysis:');
+        console.log('='.repeat(80));
+        
+        // 1. Original result from Windows audio capture
+        console.log('1️⃣ ORIGINAL RESULT FROM WINDOWS AUDIO CAPTURE:');
+        console.log('   Success:', result.success);
+        console.log('   Session ID:', result.sessionId);
+        console.log('   Total Segments:', result.totalSegments);
+        console.log('   Dual Audio Data exists:', !!result.dualAudioData);
+        
+        if (result.dualAudioData) {
+          console.log('   Dual Audio Data details:');
+          console.log('     - Total Segments:', result.dualAudioData.totalSegments);
+          console.log('     - Total Duration:', result.dualAudioData.totalDuration);
+          console.log('     - Total Input Size:', result.dualAudioData.totalInputSize);
+          console.log('     - Total Output Size:', result.dualAudioData.totalOutputSize);
+          console.log('     - Segments array length:', result.dualAudioData.segments?.length);
+          console.log('     - Input files array length:', result.dualAudioData.inputFiles?.length);
+          console.log('     - Output files array length:', result.dualAudioData.outputFiles?.length);
+          
+          // Log segment details
+          if (result.dualAudioData.segments && result.dualAudioData.segments.length > 0) {
+            console.log('     - Segment details:');
+            result.dualAudioData.segments.forEach((segment, index) => {
+              console.log(`       Segment ${index + 1}:`, {
+                segmentId: segment.segmentId,
+                startTime: segment.startTime,
+                startTimeISO: segment.startTimeISO,
+                endTime: segment.endTime,
+                endTimeISO: segment.endTimeISO,
+                duration: segment.duration,
+                inputFile: segment.inputFile,
+                outputFile: segment.outputFile,
+                inputSize: segment.inputSize,
+                outputSize: segment.outputSize,
+                hasOutputAudio: segment.hasOutputAudio,
+                segmentIndex: segment.segmentIndex
+              });
+            });
+          }
+        }
+        
+        // 2. Processed file objects
+        console.log('2️⃣ PROCESSED FILE OBJECTS:');
+        console.log('   Input Files Count:', inputFiles.length);
+        console.log('   Output Files Count:', outputFiles.length);
+        
+        inputFiles.forEach((file, index) => {
+          console.log(`     Input File ${index + 1}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type,
+            lastModified: new Date(file.lastModified).toISOString()
+          });
+        });
+        
+        outputFiles.forEach((file, index) => {
+          console.log(`     Output File ${index + 1}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type,
+            lastModified: new Date(file.lastModified).toISOString()
+          });
+        });
+        
+        // 3. Final dual audio data being sent to next component
+        console.log('3️⃣ FINAL DUAL AUDIO DATA (being sent to next component):');
+        console.log('   Input Files Count:', dualAudioData.inputFiles.length);
+        console.log('   Output Files Count:', dualAudioData.outputFiles.length);
+        console.log('   Has Dual Audio:', dualAudioData.hasDualAudio);
+        console.log('   Is Segmented:', dualAudioData.isSegmented);
+        console.log('   Total Segments:', dualAudioData.totalSegments);
+        console.log('   Total Duration:', dualAudioData.totalDuration);
+        console.log('   Segments Data Length:', dualAudioData.segments.length);
+        
+        // 4. Data integrity check
+        console.log('4️⃣ DATA INTEGRITY CHECK:');
+        const inputFilesValid = inputFiles.every(file => file instanceof File && file.size > 0);
+        const outputFilesValid = outputFiles.every(file => file instanceof File && file.size > 0);
+        const segmentsValid = dualAudioData.segments.every(segment => 
+          segment.segmentId && segment.inputFile && segment.duration > 0
+        );
+        
+        console.log('   Input Files Valid:', inputFilesValid);
+        console.log('   Output Files Valid:', outputFilesValid);
+        console.log('   Segments Valid:', segmentsValid);
+        console.log('   Overall Data Valid:', inputFilesValid && outputFilesValid && segmentsValid);
+        
+        console.log('='.repeat(80));
+
         console.log('📤 Final dual audio data:', {
           inputFilesCount: inputFiles.length,
           outputFilesCount: outputFiles.length,

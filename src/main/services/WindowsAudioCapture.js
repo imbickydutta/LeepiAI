@@ -307,22 +307,24 @@ class WindowsAudioCapture {
         }
       }
 
-      // Store segment information
-      // Note: inputRecorder contains functions and cannot be serialized through IPC
-      // It is only used internally for stopping recordings, not returned to the renderer
+      // Store segment information with improved timing
+      const segmentStartTime = Date.now();
       const segment = {
         segmentId: segmentId,
         inputFile: inputFile,
         outputFile: outputFile,
         inputRecorder: inputRecorder,  // Contains stop() function - not serializable
-        startTime: Date.now(),
+        startTime: segmentStartTime,
+        segmentStartTime: segmentStartTime, // Keep original start time for accurate duration calculation
         inputSize: 0,
         outputSize: 0,
         duration: 0,
         hasOutputAudio: hasOutputAudio,
         // Track actual file formats for proper extension handling
         inputFormat: 'webm',  // Input is saved as WebM
-        outputFormat: 'wav'   // Output is saved as WAV
+        outputFormat: 'wav',   // Output is saved as WAV
+        // Add segment index for proper ordering
+        segmentIndex: this.segmentIndex
       };
 
       // Set current segment reference for audio saving
@@ -337,20 +339,22 @@ class WindowsAudioCapture {
         outputFile: segment.outputFile,
         hasInputRecorder: !!segment.inputRecorder,
         startTime: segment.startTime,
+        segmentStartTime: segment.segmentStartTime,
+        segmentIndex: segment.segmentIndex,
         hasOutputAudio: segment.hasOutputAudio
       });
 
       this.segments.push(segment);
       this.inputRecorder = inputRecorder;
 
-      // Set timer for next segment
+      // Set timer for next segment with precise timing
       this.recordingTimer = setTimeout(() => {
         if (this.isRecording) {
           this._startNextSegment();
         }
       }, this.segmentDuration * 1000);
 
-      console.log(`✅ Windows segment ${this.segmentIndex + 1} started successfully`);
+      console.log(`✅ Windows segment ${this.segmentIndex + 1} started successfully at ${new Date(segmentStartTime).toISOString()}`);
       this.segmentIndex++;
 
     } catch (error) {
@@ -360,43 +364,27 @@ class WindowsAudioCapture {
       // Safety: Stop any existing recording due to segment failure
       console.log('🛡️ Safety: Stopping recording due to segment failure...');
       try {
-        if (this.isRecording) {
-          this.isRecording = false;
-          // Stop current recorders
-          if (this.inputRecorder) {
-            try {
-              await this.inputRecorder.stop();
-            } catch (stopError) {
-              console.warn('⚠️ Could not stop input recorder:', stopError.message);
-            }
-            this.inputRecorder = null;
+        if (this.inputRecorder) {
+          try {
+            await this.inputRecorder.stop();
+          } catch (stopError) {
+            console.warn('⚠️ Could not stop input recorder:', stopError.message);
           }
-          if (this.outputRecorder) {
-            try {
-              await this.outputRecorder.stop();
-            } catch (stopError) {
-              console.warn('⚠️ Could not stop output recorder:', stopError.message);
-            }
-            this.outputRecorder = null;
+          this.inputRecorder = null;
+        }
+        if (this.outputRecorder) {
+          try {
+            await this.outputRecorder.stop();
+          } catch (stopError) {
+            console.warn('⚠️ Could not stop output recorder:', stopError.message);
           }
-          // Clear timer
-          if (this.recordingTimer) {
-            clearTimeout(this.recordingTimer);
-            this.recordingTimer = null;
-          }
+          this.outputRecorder = null;
         }
       } catch (stopError) {
-        console.warn('⚠️ Could not stop recording during segment error recovery:', stopError.message);
+        console.warn('⚠️ Could not stop recorders during segment failure:', stopError.message);
       }
 
-      // Ensure error is serializable for IPC
-      const serializableError = {
-        name: error.name || 'Error',
-        message: error.message || 'Unknown error occurred',
-        stack: error.stack || ''
-      };
-
-      throw new Error(`Failed to start segment: ${serializableError.message}`);
+      throw error;
     }
   }
 
@@ -748,11 +736,21 @@ class WindowsAudioCapture {
     // Wait for files to be written
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Update segment info
+    // Update segment info with improved timing accuracy
     const currentSegment = this.segments[this.segments.length - 1];
     if (currentSegment) {
-      currentSegment.endTime = Date.now();
-      currentSegment.duration = (currentSegment.endTime - currentSegment.startTime) / 1000;
+      const segmentEndTime = Date.now();
+      currentSegment.endTime = segmentEndTime;
+      
+      // Calculate duration more accurately using the original segment start time
+      const actualStartTime = currentSegment.segmentStartTime || currentSegment.startTime;
+      currentSegment.duration = Math.max(0, (segmentEndTime - actualStartTime) / 1000);
+      
+      // Ensure duration doesn't exceed expected segment duration
+      if (currentSegment.duration > this.segmentDuration + 5) { // Allow 5 second buffer
+        console.warn(`⚠️ Segment duration (${currentSegment.duration}s) exceeds expected (${this.segmentDuration}s), capping at expected duration`);
+        currentSegment.duration = this.segmentDuration;
+      }
 
       // Check file sizes
       try {
@@ -768,8 +766,188 @@ class WindowsAudioCapture {
         console.warn('⚠️ Could not get file stats:', error.message);
       }
 
-      console.log(`✅ Windows segment ${this.segmentIndex} completed: ${currentSegment.duration}s, input: ${currentSegment.inputSize} bytes, output: ${currentSegment.outputSize} bytes`);
+      console.log(`✅ Windows segment ${currentSegment.segmentIndex + 1} completed:`, {
+        segmentId: currentSegment.segmentId,
+        duration: `${currentSegment.duration.toFixed(2)}s`,
+        startTime: new Date(actualStartTime).toISOString(),
+        endTime: new Date(segmentEndTime).toISOString(),
+        inputSize: `${currentSegment.inputSize} bytes`,
+        outputSize: `${currentSegment.outputSize} bytes`
+      });
     }
+  }
+
+  /**
+   * Log detailed timing information for debugging
+   * @param {Array} segments - Array of segments to analyze
+   */
+  _logDetailedTiming(segments) {
+    if (!segments || segments.length === 0) {
+      console.log('🔍 No segments to analyze for timing');
+      return;
+    }
+
+    console.log('🔍 Detailed timing analysis:');
+    console.log('='.repeat(60));
+    
+    let totalCalculatedDuration = 0;
+    let totalActualDuration = 0;
+    
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const startTime = segment.segmentStartTime || segment.startTime;
+      const endTime = segment.endTime;
+      const duration = segment.duration || 0;
+      
+      const startDate = startTime ? new Date(startTime) : null;
+      const endDate = endTime ? new Date(endTime) : null;
+      
+      const calculatedDuration = startTime && endTime ? (endTime - startTime) / 1000 : 0;
+      const timeDiff = startTime && endTime ? endTime - startTime : 0;
+      
+      totalCalculatedDuration += calculatedDuration;
+      totalActualDuration += duration;
+      
+      console.log(`Segment ${i + 1} (${segment.segmentId}):`);
+      console.log(`  Start: ${startDate ? startDate.toISOString() : 'INVALID'} (${startTime})`);
+      console.log(`  End:   ${endDate ? endDate.toISOString() : 'INVALID'} (${endTime})`);
+      console.log(`  Duration: ${duration.toFixed(2)}s (calculated: ${calculatedDuration.toFixed(2)}s)`);
+      console.log(`  Time diff: ${timeDiff}ms`);
+      console.log(`  File: ${segment.inputFile}`);
+      console.log(`  Size: ${segment.inputSize || 0} bytes`);
+      console.log('');
+    }
+    
+    console.log('Summary:');
+    console.log(`  Total segments: ${segments.length}`);
+    console.log(`  Total calculated duration: ${totalCalculatedDuration.toFixed(2)}s`);
+    console.log(`  Total actual duration: ${totalActualDuration.toFixed(2)}s`);
+    console.log(`  Duration difference: ${Math.abs(totalCalculatedDuration - totalActualDuration).toFixed(2)}s`);
+    console.log(`  Expected total duration: ${(segments.length * this.segmentDuration).toFixed(2)}s`);
+    console.log('='.repeat(60));
+  }
+
+  /**
+   * Synchronize segment timestamps to ensure consistency
+   * This helps fix issues where system clock might have drifted or delays occurred
+   * @param {Array} segments - Array of segments to synchronize
+   * @returns {Array} - Synchronized segments with corrected timestamps
+   */
+  _synchronizeSegmentTimestamps(segments) {
+    if (!segments || segments.length === 0) {
+      return segments;
+    }
+
+    console.log('🔍 Synchronizing segment timestamps...');
+    const synchronizedSegments = [];
+    const baseTime = Date.now();
+    const expectedSegmentDuration = this.segmentDuration * 1000; // Convert to milliseconds
+    
+    for (let i = 0; i < segments.length; i++) {
+      const segment = { ...segments[i] };
+      
+      // Calculate expected start and end times based on segment index
+      const expectedStartTime = baseTime - (expectedSegmentDuration * (segments.length - i));
+      const expectedEndTime = expectedStartTime + expectedSegmentDuration;
+      
+      // If the segment has reasonable timestamps, keep them
+      // Otherwise, use the calculated expected times
+      const currentStartTime = segment.segmentStartTime || segment.startTime;
+      const currentEndTime = segment.endTime;
+      
+      if (currentStartTime && currentEndTime && 
+          currentEndTime > currentStartTime && 
+          currentEndTime - currentStartTime <= expectedSegmentDuration + 5000) { // Allow 5 second buffer
+        // Keep existing timestamps if they're reasonable
+        segment.startTime = currentStartTime;
+        segment.segmentStartTime = currentStartTime;
+        segment.endTime = currentEndTime;
+        segment.duration = (currentEndTime - currentStartTime) / 1000;
+      } else {
+        // Use calculated expected times
+        segment.startTime = expectedStartTime;
+        segment.segmentStartTime = expectedStartTime;
+        segment.endTime = expectedEndTime;
+        segment.duration = this.segmentDuration;
+        
+        console.log(`⚠️ Segment ${i + 1} timestamps corrected:`, {
+          segmentId: segment.segmentId,
+          originalStart: currentStartTime ? new Date(currentStartTime).toISOString() : 'invalid',
+          originalEnd: currentEndTime ? new Date(currentEndTime).toISOString() : 'invalid',
+          correctedStart: new Date(expectedStartTime).toISOString(),
+          correctedEnd: new Date(expectedEndTime).toISOString(),
+          duration: `${segment.duration}s`
+        });
+      }
+      
+      synchronizedSegments.push(segment);
+    }
+    
+    return synchronizedSegments;
+  }
+
+  /**
+   * Validate and fix segment timestamps to ensure accuracy
+   * @param {Array} segments - Array of segments to validate
+   * @returns {Array} - Validated segments with corrected timestamps
+   */
+  _validateSegmentTimestamps(segments) {
+    if (!segments || segments.length === 0) {
+      return segments;
+    }
+
+    console.log('🔍 Validating segment timestamps...');
+    const validatedSegments = [];
+    let previousEndTime = null;
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = { ...segments[i] };
+      const segmentStart = segment.segmentStartTime || segment.startTime;
+      const segmentEnd = segment.endTime;
+      
+      // Validate start time
+      if (!segmentStart || segmentStart <= 0) {
+        console.warn(`⚠️ Segment ${i + 1} has invalid start time: ${segmentStart}, using fallback`);
+        segment.startTime = Date.now() - (this.segmentDuration * 1000 * (segments.length - i));
+        segment.segmentStartTime = segment.startTime;
+      }
+      
+      // Validate end time
+      if (!segmentEnd || segmentEnd <= 0) {
+        console.warn(`⚠️ Segment ${i + 1} has invalid end time: ${segmentEnd}, using fallback`);
+        segment.endTime = segment.startTime + (this.segmentDuration * 1000);
+      }
+      
+      // Validate duration
+      const calculatedDuration = (segment.endTime - segment.startTime) / 1000;
+      if (calculatedDuration < 0 || calculatedDuration > this.segmentDuration + 10) {
+        console.warn(`⚠️ Segment ${i + 1} has unreasonable duration: ${calculatedDuration}s, capping at ${this.segmentDuration}s`);
+        segment.duration = Math.min(this.segmentDuration, calculatedDuration);
+        segment.endTime = segment.startTime + (segment.duration * 1000);
+      } else {
+        segment.duration = calculatedDuration;
+      }
+      
+      // Ensure segments don't overlap
+      if (previousEndTime && segment.startTime < previousEndTime) {
+        console.warn(`⚠️ Segment ${i + 1} overlaps with previous segment, adjusting start time`);
+        segment.startTime = previousEndTime + 1000; // 1 second gap
+        segment.segmentStartTime = segment.startTime;
+        segment.duration = Math.max(0, (segment.endTime - segment.startTime) / 1000);
+      }
+      
+      previousEndTime = segment.endTime;
+      validatedSegments.push(segment);
+      
+      console.log(`✅ Segment ${i + 1} validated:`, {
+        segmentId: segment.segmentId,
+        startTime: new Date(segment.startTime).toISOString(),
+        endTime: new Date(segment.endTime).toISOString(),
+        duration: `${segment.duration.toFixed(2)}s`
+      });
+    }
+    
+    return validatedSegments;
   }
 
   /**
@@ -791,16 +969,50 @@ class WindowsAudioCapture {
 
       console.log('✅ Windows dual recording stopped successfully');
 
-      // Calculate total stats
+      // Calculate total stats with improved accuracy
       let totalInputSize = 0;
       let totalOutputSize = 0;
       let totalDuration = 0;
+      let firstSegmentStart = null;
+      let lastSegmentEnd = null;
 
       for (const segment of this.segments) {
         totalInputSize += segment.inputSize || 0;
         totalOutputSize += segment.outputSize || 0;
-        totalDuration += segment.duration || 0;
+        
+        // Track actual start and end times for more accurate total duration
+        const segmentStart = segment.segmentStartTime || segment.startTime;
+        const segmentEnd = segment.endTime;
+        
+        if (segmentStart && (!firstSegmentStart || segmentStart < firstSegmentStart)) {
+          firstSegmentStart = segmentStart;
+        }
+        if (segmentEnd && (!lastSegmentEnd || segmentEnd > lastSegmentEnd)) {
+          lastSegmentEnd = segmentEnd;
+        }
       }
+      
+      // Calculate total duration from actual start to end times
+      if (firstSegmentStart && lastSegmentEnd) {
+        totalDuration = Math.max(0, (lastSegmentEnd - firstSegmentStart) / 1000);
+        console.log('🔍 Total duration calculation:', {
+          firstSegmentStart: new Date(firstSegmentStart).toISOString(),
+          lastSegmentEnd: new Date(lastSegmentEnd).toISOString(),
+          calculatedDuration: `${totalDuration.toFixed(2)}s`,
+          segmentCount: this.segments.length
+        });
+      } else {
+        // Fallback to summing individual segment durations
+        totalDuration = this.segments.reduce((sum, segment) => sum + (segment.duration || 0), 0);
+        console.log('⚠️ Using fallback duration calculation (sum of segments):', `${totalDuration.toFixed(2)}s`);
+      }
+
+      // Validate and fix segment timestamps before returning
+      const validatedSegments = this._validateSegmentTimestamps(this.segments);
+      const synchronizedSegments = this._synchronizeSegmentTimestamps(validatedSegments);
+      
+      // Log detailed timing information for debugging
+      this._logDetailedTiming(synchronizedSegments);
 
       // Create a serializable result object matching the original AudioCaptureManager format
       const result = {
@@ -809,8 +1021,8 @@ class WindowsAudioCapture {
         dualAudioData: {
           success: true,
           sessionId: this.sessionId,
-          totalSegments: this.segments.length,
-          segments: this.segments.map(segment => ({
+          totalSegments: synchronizedSegments.length,
+          segments: synchronizedSegments.map(segment => ({
             segmentId: segment.segmentId,
             inputFile: segment.inputFile,
             outputFile: segment.outputFile,
@@ -818,20 +1030,25 @@ class WindowsAudioCapture {
             outputSize: segment.outputSize || 0,
             duration: segment.duration || 0,
             startTime: segment.startTime,
+            segmentStartTime: segment.segmentStartTime, // Include for accurate timing
             endTime: segment.endTime,
-            hasOutputAudio: segment.hasOutputAudio || false
+            hasOutputAudio: segment.hasOutputAudio || false,
+            segmentIndex: segment.segmentIndex || 0, // Include segment index for ordering
+            // Add formatted timestamps for easier debugging
+            startTimeISO: segment.startTime ? new Date(segment.startTime).toISOString() : null,
+            endTimeISO: segment.endTime ? new Date(segment.endTime).toISOString() : null
           })),
-          inputFiles: this.segments.map(s => s.inputFile),
-          outputFiles: this.segments.map(s => s.outputFile),
+          inputFiles: synchronizedSegments.map(s => s.inputFile),
+          outputFiles: synchronizedSegments.map(s => s.outputFile),
           totalDuration: totalDuration,
           totalInputSize: totalInputSize,
           totalOutputSize: totalOutputSize
         },
-        totalSegments: this.segments.length,
+        totalSegments: synchronizedSegments.length,
         totalInputSize,
         totalOutputSize,
         totalDuration,
-        segments: this.segments.map(segment => ({
+        segments: synchronizedSegments.map(segment => ({
           segmentId: segment.segmentId,
           inputFile: segment.inputFile,
           outputFile: segment.outputFile,
@@ -842,11 +1059,11 @@ class WindowsAudioCapture {
           endTime: segment.endTime,
           hasOutputAudio: segment.hasOutputAudio || false
         })),
-        inputFiles: this.segments.map(s => s.inputFile),
-        outputFiles: this.segments.map(s => s.outputFile)
+        inputFiles: synchronizedSegments.map(s => s.inputFile),
+        outputFiles: synchronizedSegments.map(s => s.outputFile)
       };
 
-      console.log(`✅ Windows recording stopped: ${this.segments.length} segments, ${(totalInputSize / (1024 * 1024)).toFixed(2)}MB total input, ${(totalOutputSize / (1024 * 1024)).toFixed(2)}MB total output`);
+      console.log(`✅ Windows recording stopped: ${synchronizedSegments.length} segments, ${(totalInputSize / (1024 * 1024)).toFixed(2)}MB total input, ${(totalOutputSize / (1024 * 1024)).toFixed(2)}MB total output, total duration: ${totalDuration.toFixed(2)}s`);
       console.log('📤 Returning result:', JSON.stringify(result, null, 2));
 
       return result;

@@ -345,6 +345,50 @@ class ApiService {
         systemFiles: systemFiles?.length || 0
       });
 
+      // COMPREHENSIVE DEBUG: Log data being sent to backend
+      console.log('🔍 COMPREHENSIVE_DEBUG_API - Data being sent to backend:');
+      console.log('='.repeat(80));
+      
+      // Log microphone files
+      if (microphoneFiles && microphoneFiles.length > 0) {
+        console.log('📁 MICROPHONE FILES (being sent to backend):');
+        microphoneFiles.forEach((file, index) => {
+          console.log(`  Mic ${index + 1}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type,
+            lastModified: new Date(file.lastModified).toISOString()
+          });
+        });
+      }
+      
+      // Log system files
+      if (systemFiles && systemFiles.length > 0) {
+        console.log('📁 SYSTEM FILES (being sent to backend):');
+        systemFiles.forEach((file, index) => {
+          console.log(`  Sys ${index + 1}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type,
+            lastModified: new Date(file.lastModified).toISOString()
+          });
+        });
+      }
+      
+      // Data validation before upload
+      const uploadValidation = {
+        microphoneFilesValid: microphoneFiles?.every(file => file instanceof File && file.size > 0) || false,
+        systemFilesValid: systemFiles?.every(file => file instanceof File && file.size > 0) || false,
+        totalFiles: (microphoneFiles?.length || 0) + (systemFiles?.length || 0),
+        totalSize: [...(microphoneFiles || []), ...(systemFiles || [])]
+          .reduce((sum, file) => sum + (file.size || 0), 0)
+      };
+      
+      console.log('✅ UPLOAD VALIDATION:', uploadValidation);
+      console.log('='.repeat(80));
+
       // Create form data with all files
       const formData = new FormData();
 

@@ -79,6 +79,82 @@ function MainInterface({ user, onLogout, onError, onSuccess }) {
 
   const handleRecordingComplete = async (dualAudioData) => {
     try {
+      // COMPREHENSIVE DEBUG: Log data received from RecordingPanel
+      console.log('🔍 COMPREHENSIVE_DEBUG_MAIN - Data received in MainInterface:');
+      console.log('='.repeat(80));
+      console.log('📥 RECEIVED DUAL AUDIO DATA:', {
+        inputFilesCount: dualAudioData.inputFiles?.length || 0,
+        outputFilesCount: dualAudioData.outputFiles?.length || 0,
+        hasDualAudio: dualAudioData.hasDualAudio,
+        isSegmented: dualAudioData.isSegmented,
+        totalSegments: dualAudioData.totalSegments,
+        totalDuration: dualAudioData.totalDuration,
+        segmentsDataLength: dualAudioData.segments?.length || 0
+      });
+      
+      // Log detailed file information
+      if (dualAudioData.inputFiles && dualAudioData.inputFiles.length > 0) {
+        console.log('📁 INPUT FILES DETAILS:');
+        dualAudioData.inputFiles.forEach((file, index) => {
+          console.log(`  Input ${index + 1}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type,
+            lastModified: new Date(file.lastModified).toISOString()
+          });
+        });
+      }
+      
+      if (dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0) {
+        console.log('📁 OUTPUT FILES DETAILS:');
+        dualAudioData.outputFiles.forEach((file, index) => {
+          console.log(`  Output ${index + 1}:`, {
+            name: file.name,
+            size: file.size,
+            sizeMB: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            type: file.type,
+            lastModified: new Date(file.lastModified).toISOString()
+          });
+        });
+      }
+      
+      // Log segments data if available
+      if (dualAudioData.segments && dualAudioData.segments.length > 0) {
+        console.log('📊 SEGMENTS DATA:');
+        dualAudioData.segments.forEach((segment, index) => {
+          console.log(`  Segment ${index + 1}:`, {
+            segmentId: segment.segmentId,
+            startTime: segment.startTime,
+            startTimeISO: segment.startTimeISO,
+            endTime: segment.endTime,
+            endTimeISO: segment.endTimeISO,
+            duration: segment.duration,
+            inputFile: segment.inputFile,
+            outputFile: segment.outputFile,
+            inputSize: segment.inputSize,
+            outputSize: segment.outputSize,
+            hasOutputAudio: segment.hasOutputAudio,
+            segmentIndex: segment.segmentIndex
+          });
+        });
+      }
+      
+      // Data validation
+      const dataValidation = {
+        hasInputFiles: !!(dualAudioData.inputFiles && dualAudioData.inputFiles.length > 0),
+        hasOutputFiles: !!(dualAudioData.outputFiles && dualAudioData.outputFiles.length > 0),
+        inputFilesValid: dualAudioData.inputFiles?.every(file => file instanceof File && file.size > 0) || false,
+        outputFilesValid: dualAudioData.outputFiles?.every(file => file instanceof File && file.size > 0) || false,
+        segmentsValid: dualAudioData.segments?.every(segment => 
+          segment.segmentId && segment.inputFile && segment.duration > 0
+        ) || false,
+        totalDurationValid: typeof dualAudioData.totalDuration === 'number' && dualAudioData.totalDuration > 0
+      };
+      
+      console.log('✅ DATA VALIDATION:', dataValidation);
+      console.log('='.repeat(80));
+
       // TEMP_DEBUG_FRONTEND_005: Log recording completion
       console.log('📤 TEMP_DEBUG_FRONTEND_005 - handleRecordingComplete received:', {
         success: dualAudioData.success,

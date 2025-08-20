@@ -63,8 +63,6 @@
     "appId": "com.leepi.interview-recorder",
     "productName": "LeepiAI Interview Recorder",
     "copyright": "Copyright © 2024 LeepiAI",
-    "cscLink": null,
-    "cscKeyPassword": null,
     "directories": {
       "output": "build-output",
       "buildResources": "build-resources"
